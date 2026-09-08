@@ -14,7 +14,7 @@
  */
 
 plugins {
-    id 'com.android.application' version '8.6.0'
+    id 'com.android.application' version '8.9.1'
 }
 
 def modelDir = file('models')
@@ -55,35 +55,35 @@ repositories {
 dependencies {
     // --- MediaPipe Tasks Face Landmarker (Apache-2.0) -------------------------
     // Runs the face_landmarker.task bundled model completely on-device.
-    implementation('com.google.mediapipe:tasks-vision:1.0.0') {
-        exclude module: 'kotlin-stdlib'
-        exclude module: 'kotlin-stdlib-jdk8'
-    }
+    // Kotlin-based: keep its kotlin-stdlib dependency (transitive alignment
+    // below keeps every kotlin-stdlib* artifact on one version so the
+    // duplicate-class check passes).
+    implementation 'com.google.mediapipe:tasks-vision:1.0.0'
 
     // --- TensorFlow Lite interpreter for MobileFaceNet embeddings --------------
     // The 2.16.1 pairing ships Android natives (arm64/v7, x86/x64) + the public API.
-    implementation('org.tensorflow:tensorflow-lite:2.16.1') {
-        exclude module: 'kotlin-stdlib'
-        exclude module: 'kotlin-stdlib-jdk8'
-    }
-    implementation('org.tensorflow:tensorflow-lite-api:2.16.1') {
-        exclude module: 'kotlin-stdlib'
-        exclude module: 'kotlin-stdlib-jdk8'
-    }
+    implementation 'org.tensorflow:tensorflow-lite:2.16.1'
+    implementation 'org.tensorflow:tensorflow-lite-api:2.16.1'
 
-    // --- Annotations only ------------------------------------------------------
-    implementation('androidx.appcompat:appcompat:1.6.1') {
-        exclude module: 'kotlin-stdlib'
-        exclude module: 'kotlin-stdlib-jdk8'
-    }
-    implementation('androidx.core:core:1.12.0') {
-        exclude module: 'kotlin-stdlib'
-        exclude module: 'kotlin-stdlib-jdk8'
-    }
+    // --- AndroidX --------------------------------------------------------------
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.core:core:1.12.0'
     implementation 'androidx.annotation:annotation:1.2.0'
 
     // --- Unit tests (run on the host JVM against pure-Java classes) ------------
     testImplementation 'junit:junit:4.13.2'
+}
+
+// kotlin-stdlib-jdk7/jdk8 content was merged into kotlin-stdlib in Kotlin 1.8;
+// mixed transitive versions produce "Duplicate class kotlin.collections.jdk8…"
+// errors. Pin every kotlin-stdlib* artifact to the same release.
+configurations.configureEach {
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == 'org.jetbrains.kotlin'
+                && details.requested.name.startsWith('kotlin-stdlib')) {
+            details.useVersion '1.8.22'
+        }
+    }
 }
 
 // Copy git-tracked model files (when present) into the app assets so they are

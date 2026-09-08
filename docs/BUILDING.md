@@ -6,8 +6,8 @@
 |------|---------|
 | JDK | 17 or 21 (verified: `/home/davesir/.jdks/jdk-17.0.20.1+1`) |
 | Android SDK | cmdline-tools 12.0 at `sdk.dir` (see `local.properties`), platforms `android-26`/`android-35`, build-tools 34/35 |
-| Gradle | 8.14.2 (pinned by the wrapper) |
-| AGP | 8.11.0 (declared in `build.gradle`) |
+| Gradle | 8.11.1 (pinned by the wrapper) |
+| AGP | 8.9.1 (declared in `build.gradle`) |
 
 ## First build
 
