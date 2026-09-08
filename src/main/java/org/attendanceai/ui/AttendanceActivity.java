@@ -5,6 +5,7 @@
 package org.attendanceai.ui;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -14,6 +15,8 @@ import android.widget.Button;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 
@@ -28,6 +31,8 @@ import org.attendanceai.camera.CameraBackend;
 import org.attendanceai.camera.CameraFrame;
 import org.attendanceai.camera.SimulatedCameraBackend;
 import org.attendanceai.pipeline.FacePipeline;
+import org.attendanceai.presentation.lockscreen.LockScreenActivity;
+import org.attendanceai.presentation.lockscreen.SecurityGate;
 import org.attendanceai.store.AttendanceStore;
 
 /**
@@ -61,9 +66,34 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     private boolean running;
 
+    /**
+     * Phase-1 security gate: the lock screen (seed-phrase setup on first
+     * run, PIN/biometric unlock afterwards) runs in front of the app.
+     * On RESULT_OK the session is marked unlocked and the activity
+     * initialises; any other outcome closes the app (fail closed).
+     */
+    private final ActivityResultLauncher<Intent> lockLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == RESULT_OK) {
+                    initAfterUnlock();
+                } else {
+                    finish();
+                }
+            });
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (SecurityGate.lockRequired()) {
+            lockLauncher.launch(LockScreenActivity.createIntent(this));
+            return;
+        }
+        initAfterUnlock();
+    }
+
+    /** Original onCreate body — only executed once the vault is satisfied. */
+    private void initAfterUnlock() {
         buildContent();
         store = new AttendanceStore(getFilesDir());
         pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {

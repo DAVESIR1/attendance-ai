@@ -3,7 +3,10 @@
 local.properties
 /models/*.task
 /models/*.tflite
-/src/main/assets/
+# Track the BIP-39 wordlist asset but keep everything else in assets/ out
+# (model binaries are staged here by scripts/fetch_models.sh).
+/src/main/assets/*
+!/src/main/assets/bip39_english.txt
 .gradle/
 build/
 .idea/
@@ -13,3 +16,4 @@ captures/
 *.aab
 .DS_Store
 out/
+*.hprof

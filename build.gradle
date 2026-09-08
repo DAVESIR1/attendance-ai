@@ -15,6 +15,8 @@
 
 plugins {
     id 'com.android.application' version '8.9.1'
+    id 'org.jetbrains.kotlin.android' version '2.0.21'
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21'
 }
 
 def modelDir = file('models')
@@ -42,6 +44,14 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+    }
+
+    buildFeatures {
+        compose true
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
     }
 }
 
@@ -72,16 +82,29 @@ dependencies {
 
     // --- Unit tests (run on the host JVM against pure-Java classes) ------------
     testImplementation 'junit:junit:4.13.2'
+
+    // --- Phase 1 security core (Kotlin + Compose lockscreen) -------------------
+    implementation platform('androidx.compose:compose-bom:2024.09.03')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.activity:activity-compose:1.9.2'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6'
+    // EncryptedSharedPreferences-backed PIN/seed storage (androidx security-crypto)
+    implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+    // BiometricManager / BiometricPrompt for the biometric opt-in + unlock
+    implementation 'androidx.biometric:biometric:1.1.0'
 }
 
 // kotlin-stdlib-jdk7/jdk8 content was merged into kotlin-stdlib in Kotlin 1.8;
 // mixed transitive versions produce "Duplicate class kotlin.collections.jdk8…"
-// errors. Pin every kotlin-stdlib* artifact to the same release.
+// errors. Pin every kotlin-stdlib* artifact to the version matching the Kotlin
+// compiler above (2.0.21) so MediaPipe/TFLite transitives stay consistent and
+// the Compose runtime sees the stdlib it was compiled against.
 configurations.configureEach {
     resolutionStrategy.eachDependency { details ->
         if (details.requested.group == 'org.jetbrains.kotlin'
                 && details.requested.name.startsWith('kotlin-stdlib')) {
-            details.useVersion '1.8.22'
+            details.useVersion '2.0.21'
         }
     }
 }

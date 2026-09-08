@@ -24,6 +24,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Phase 1 security gate: seed-phrase setup / PIN + biometric lock.
+             Returns RESULT_OK to the caller after unlock or completed setup. -->
+        <activity android:name="org.attendanceai.presentation.lockscreen.LockScreenActivity"
+                  android:label="@string/activity_name"
+                  android:theme="@style/Theme.AttendanceAI"
+                  android:exported="false" />
     </application>
 
 </manifest>
