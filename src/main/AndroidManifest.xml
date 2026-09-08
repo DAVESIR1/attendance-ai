@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Attendance AI — application manifest.
+
+  Declares the app, grants the camera permission and marks the entry
+  activity. All UI is constructed programmatically in Java (no XML layouts).
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-sdk
+        android:minSdkVersion="24"
+        android:targetSdkVersion="35" />
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" />
+
+    <application android:label="@string/app_name">
+        <activity android:name="org.attendanceai.ui.AttendanceActivity"
+                  android:label="@string/activity_name"
+                  android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

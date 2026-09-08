@@ -3,6 +3,7 @@
 local.properties
 /models/*.task
 /models/*.tflite
+/src/main/assets/
 .gradle/
 build/
 .idea/
@@ -11,3 +12,4 @@ captures/
 *.apk
 *.aab
 .DS_Store
+out/

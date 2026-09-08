@@ -1,0 +1,99 @@
+/*
+ * Attendance AI — offline-first, on-device face-recognition attendance app.
+ * Copyright (C) 2026 The Attendance AI Authors
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See https://www.gnu.org/licenses/ for the full license text.
+ */
+
+plugins {
+    id 'com.android.application' version '8.6.0'
+}
+
+def modelDir = file('models')
+
+android {
+    namespace 'org.attendanceai'
+
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'org.attendanceai.app'
+        minSdk 24
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    // androidx.camera, androidx.activity and MediaPipe Tasks are published on Google Maven
+    google()
+    // TensorFlow Lite (Java Android) is published on Maven Central
+    mavenCentral()
+}
+
+dependencies {
+    // --- MediaPipe Tasks Face Landmarker (Apache-2.0) -------------------------
+    // Runs the face_landmarker.task bundled model completely on-device.
+    implementation('com.google.mediapipe:tasks-vision:1.0.0') {
+        exclude module: 'kotlin-stdlib'
+        exclude module: 'kotlin-stdlib-jdk8'
+    }
+
+    // --- TensorFlow Lite interpreter for MobileFaceNet embeddings --------------
+    // The 2.16.1 pairing ships Android natives (arm64/v7, x86/x64) + the public API.
+    implementation('org.tensorflow:tensorflow-lite:2.16.1') {
+        exclude module: 'kotlin-stdlib'
+        exclude module: 'kotlin-stdlib-jdk8'
+    }
+    implementation('org.tensorflow:tensorflow-lite-api:2.16.1') {
+        exclude module: 'kotlin-stdlib'
+        exclude module: 'kotlin-stdlib-jdk8'
+    }
+
+    // --- Annotations only ------------------------------------------------------
+    implementation('androidx.appcompat:appcompat:1.6.1') {
+        exclude module: 'kotlin-stdlib'
+        exclude module: 'kotlin-stdlib-jdk8'
+    }
+    implementation('androidx.core:core:1.12.0') {
+        exclude module: 'kotlin-stdlib'
+        exclude module: 'kotlin-stdlib-jdk8'
+    }
+    implementation 'androidx.annotation:annotation:1.2.0'
+
+    // --- Unit tests (run on the host JVM against pure-Java classes) ------------
+    testImplementation 'junit:junit:4.13.2'
+}
+
+// Copy git-tracked model files (when present) into the app assets so they are
+// bundled inside the APK. models/ is gitignored for the model binaries; this
+// step makes a locally fetched model available to the running app.
+task copyModels(type: Copy) {
+    from modelDir
+    into "$projectDir/src/main/assets"
+    include '*.task', '*.tflite'
+    onlyIf { modelDir.exists() }
+}
+
+preBuild.dependsOn copyModels
