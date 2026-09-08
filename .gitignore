@@ -1,0 +1,13 @@
+*.jks
+*.keystore
+local.properties
+/models/*.task
+/models/*.tflite
+.gradle/
+build/
+.idea/
+*.iml
+captures/
+*.apk
+*.aab
+.DS_Store
