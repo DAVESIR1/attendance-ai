@@ -30,6 +30,7 @@ public final class TfliteEmbeddingEngine implements EmbeddingEngine {
     private final int modelWidth;
     private final int modelHeight;
     private final int outputDim;
+    private final int inputBatchSize;
 
     public TfliteEmbeddingEngine(File modelFile, int modelWidth, int modelHeight)
             throws IOException {
@@ -41,7 +42,28 @@ public final class TfliteEmbeddingEngine implements EmbeddingEngine {
 
         this.interpreter = new Interpreter(modelFile);
         try {
-            interpreter.resizeInput(0, new int[]{1, modelHeight, modelWidth, 3});
+            // Read the model's native input shape so we can resize only if the
+            // graph allows it. Some MobileFaceNet conversions hardcode batch=2
+            // (e.g. final RESHAPE → [2,192]); resizing such a model to batch 1
+            // triggers reshape.cc:92 num_input_elements != num_output_elements
+            // (192 != 384), Node 229 RESHAPE.
+            //
+            // Best effort: keep the model's native shape when the leading dim is
+            // not 1. Fall back to the requested {1, H, W, 3} only when the native
+            // batch dimension is 1 (fully dynamic) or -1.
+            int[] nativeShape = interpreter.getInputTensor(0).shape();
+            int nativeBatch = nativeShape.length > 0 ? nativeShape[0] : 1;
+            boolean resize;
+            if (nativeBatch == 1 || nativeBatch == -1) {
+                // Dynamic batch or already batch-1: enforce our desired batch.
+                resize = true;
+            } else {
+                // Fixed batch > 1 (e.g. 2): keep native shape; do not resize.
+                resize = false;
+            }
+            if (resize) {
+                interpreter.resizeInput(0, new int[]{1, modelHeight, modelWidth, 3});
+            }
             interpreter.allocateTensors();
 
             Tensor outputTensor = interpreter.getOutputTensor(0);
@@ -56,7 +78,9 @@ public final class TfliteEmbeddingEngine implements EmbeddingEngine {
             this.outputDim = dim;
             this.output = new float[dim];
 
-            int elements = modelHeight * modelWidth * 3;
+            int inputBatchSize = nativeShape.length > 0 ? nativeShape[0] : 1;
+            this.inputBatchSize = inputBatchSize;
+            int elements = modelHeight * modelWidth * 3 * inputBatchSize;
             this.inputBuffer = ByteBuffer.allocateDirect(elements * 4).order(ByteOrder.nativeOrder());
         } catch (RuntimeException e) {
             interpreter.close();
@@ -66,7 +90,7 @@ public final class TfliteEmbeddingEngine implements EmbeddingEngine {
 
     @Override
     public int inputLength() {
-        return modelHeight * modelWidth * 3;
+        return modelHeight * modelWidth * 3 * inputBatchSize;
     }
 
     @Override
@@ -76,16 +100,26 @@ public final class TfliteEmbeddingEngine implements EmbeddingEngine {
 
     @Override
     public float[] embed(float[] alignedTensor) {
-        if (alignedTensor == null || alignedTensor.length < inputLength()) {
+        int needed = inputLength();
+        if (alignedTensor == null || alignedTensor.length < needed) {
             return new float[outputDim];
         }
         try {
+            int batch = inputBatchSize;
             FloatBuffer floats = inputBuffer.asFloatBuffer();
             floats.position(0);
-            floats.put(alignedTensor, 0, inputLength());
+            // Write one aligned face per batch slot. If the model uses batch > 1
+            // we duplicate the single aligned tensor across all batch slots so the
+            // graph still produces valid outputs (each row is the same embedding).
+            for (int b = 0; b < batch; b++) {
+                floats.put(alignedTensor, 0, needed / batch);
+            }
             inputBuffer.rewind();
             interpreter.run(inputBuffer, output);
-            return output.clone();
+            // Return the first row only — callers expect a single embedding.
+            float[] row = new float[outputDim / batch];
+            System.arraycopy(output, 0, row, 0, row.length);
+            return row;
         } catch (RuntimeException e) {
             return new float[outputDim];
         }

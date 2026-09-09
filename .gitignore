@@ -17,3 +17,5 @@ captures/
 .DS_Store
 out/
 *.hprof
+.kotlin/
+.qodo/
