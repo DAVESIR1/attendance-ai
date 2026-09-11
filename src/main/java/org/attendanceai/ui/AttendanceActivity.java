@@ -40,6 +40,7 @@ import org.attendanceai.camera.CameraFrame;
 import org.attendanceai.pipeline.FacePipeline;
 import org.attendanceai.presentation.lockscreen.LockScreenActivity;
 import org.attendanceai.presentation.lockscreen.SecurityGate;
+import org.attendanceai.BuildConfig;
 import org.attendanceai.data.local.db.AttendanceDatabase;
 import org.attendanceai.data.local.db.VaultSession;
 import org.attendanceai.store.AttendanceStore;
@@ -132,9 +133,10 @@ public final class AttendanceActivity extends AppCompatActivity {
                 // Keep the secure attendance shell usable even when a native
                 // ML library/model is unavailable on a particular phone.
                 pipeline = null;
-                banner.setText("Encrypted storage ready • face model unavailable");
+                String modelError = pipelineFailure.getClass().getSimpleName();
+                banner.setText("Encrypted storage ready • face model unavailable (" + modelError + ")");
                 resultView.setText("Camera features need the face model to start");
-                log("face recognition pipeline unavailable");
+                log("face recognition pipeline unavailable: " + modelError);
             }
 
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -146,7 +148,8 @@ public final class AttendanceActivity extends AppCompatActivity {
             // Database, migration, or store failures must be actionable on
             // screen rather than looking like an unlock failure.
             showInitializationError(
-                    "The secure app session could not be started at: " + initializationPhase);
+                    "The secure app session could not be started at: " + initializationPhase +
+                            "\nDiagnostic: " + failure.getClass().getSimpleName());
         }
     }
 
@@ -158,7 +161,7 @@ public final class AttendanceActivity extends AppCompatActivity {
                 new int[]{0xFFE8E5FF, 0xFFF4F7FC, 0xFFFFE9EF}));
 
         TextView title = new TextView(this);
-        title.setText("Attendance AI");
+        title.setText("Attendance AI • " + BuildConfig.VERSION_NAME);
         title.setTextSize(28f);
         title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         title.setTextColor(0xFF1D2942);
@@ -193,7 +196,7 @@ public final class AttendanceActivity extends AppCompatActivity {
         root.addView(title);
 
         TextView subtitle = new TextView(this);
-        subtitle.setText("Private • Offline • Encrypted");
+        subtitle.setText("Private • Offline • Encrypted • " + BuildConfig.VERSION_NAME);
         subtitle.setTextSize(14f);
         subtitle.setTextColor(0xFF66738D);
         root.addView(subtitle);

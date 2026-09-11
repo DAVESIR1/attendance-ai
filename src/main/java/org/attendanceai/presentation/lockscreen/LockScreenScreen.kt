@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import org.attendanceai.BuildConfig
 
 private val LockBackground = Color(0xFFF4F7FC)
 private val LockInk = Color(0xFF1D2942)
@@ -124,7 +125,7 @@ fun LockScreenScreen(
                         }
                     }
                     Text(
-                        text = "Your face data stays on this device and is encrypted at rest.",
+                        "Diagnostic build ${BuildConfig.VERSION_NAME} • Your face data stays on this device and is encrypted at rest.",
                         color = LockMuted,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth(),
@@ -157,7 +158,7 @@ private fun LockBrandHeader() {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text("Attendance AI", color = LockInk, style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold)
-            Text("Private • Offline • Encrypted", color = LockMuted,
+            Text("Private • Offline • Encrypted • ${BuildConfig.VERSION_NAME}", color = LockMuted,
                 style = MaterialTheme.typography.bodyMedium)
         }
     }

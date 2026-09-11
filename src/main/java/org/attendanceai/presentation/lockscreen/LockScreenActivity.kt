@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.biometric.BiometricManager
+import org.attendanceai.BuildConfig
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
@@ -115,7 +116,7 @@ private fun LockStartupErrorScreen(onRetry: () -> Unit, onClose: () -> Unit) {
             modifier = Modifier.padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Attendance AI", style = MaterialTheme.typography.headlineSmall,
+            Text("Attendance AI • ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.headlineSmall,
                 color = Color(0xFF1D2942))
             Text(
                 "The secure screen could not be prepared. Your data was not changed. " +
