@@ -1,7 +1,7 @@
 # Attendance AI — Project State
 (Single source of truth for "where are we." Read AGENT_RULES.md first, always.)
 
-Last updated: 2026-09-11T16:00:00Z
+Last updated: 2026-09-11T16:10:00Z
 Last updated by: GPT-5.6 Luna / Zed on Linux
 
 ## A. Stage Progress (fill in real status for each, from actual git tags/files/tests)
@@ -18,14 +18,14 @@ Last updated by: GPT-5.6 Luna / Zed on Linux
 
 ## B. Repo Facts (query these live, don't assume)
 - Current branch: `main`
-- Latest commit (hash + message): `36f51f2 chore(local-tools): ignore .kotlin/ and .qodo/, remove stale sessions dirs`
+- Latest commit (hash + message): `cc99941 feat(phase2): integrate encrypted Room attendance storage`
 - All tags: `phase-1-complete`, `phase-2-complete`
-- Uncommitted local changes (list files or "none"): `build.gradle`, `models/checksums.sha256`, `src/androidTest/kotlin/org/attendanceai/data/local/db/AttendanceDatabaseTest.kt`, `src/main/java/org/attendanceai/data/local/db/`, `src/main/java/org/attendanceai/data/local/db/RoomAttendanceStore.kt`, `src/main/java/org/attendanceai/presentation/lockscreen/`, `src/main/java/org/attendanceai/store/AttendanceStore.java`, `src/main/java/org/attendanceai/ui/AttendanceActivity.java`, `AGENT_RULES.md`, `PROJECT_STATE.md`, `src/test/kotlin/org/attendanceai/data/local/db/`
+- Uncommitted local changes (list files or "none"): `PROJECT_STATE.md` (state-only follow-up commit)
 - Known model files present in models/ (with checksums if available): `face_landmarker.task` — SHA-256 `64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff`; `mobilefacenet.tflite` — SHA-256 `d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b`; `models/checksums.sha256` currently contains comments only and no recorded hashes
 - CI status of last push (if checkable): workflow configuration is present in `.github/workflows/android.yml`; live GitHub Actions status was not checked in this environment
 
 ## C. Next Action (THE MOST IMPORTANT LINE — always keep this accurate and specific)
-Commit the validated Phase 2 foundation locally, then update this state file with the resulting commit hash. Device-only SQLCipher tests remain pending until an emulator/device is attached.
+Attach an Android emulator/device and run `./gradlew connectedDebugAndroidTest`; then manually verify first-run setup, PIN unlock, SQLCipher session opening, and the Room-backed roster/attendance path before declaring Phase 2 complete.
 
 ## D. Open Decisions / Blockers
 - Gradle wrapper/dependency validation may be blocked in this environment because the wrapper distribution host previously failed DNS resolution; retry before claiming Phase 2 green.
@@ -39,5 +39,5 @@ Commit the validated Phase 2 foundation locally, then update this state file wit
 - `src/main/java/org/attendanceai/camera/Camera2Backend.java` is an intentional Camera2 implementation despite the newer plan preferring CameraX; keep until the camera layer migration is planned.
 
 ## F. Log (append-only, newest entry on top, keep last ~20 entries, trim older ones)
-- 2026-09-11T16:00:00Z — Final validation passed: `assembleDebug`, `testDebugUnitTest`, and `assembleDebugAndroidTest`. `connectedDebugAndroidTest` remains unrun in practice because ADB reports no connected devices. `git diff --check` is clean; ready for a local commit only.
+- 2026-09-11T16:10:00Z — Created local feature commit `cc99941` (`feat(phase2): integrate encrypted Room attendance storage`). No remote push was performed. Phase 2 source/build validation is green, but device-only SQLCipher/instrumentation and manual unlock verification remain open.
 - 2026-09-11T14:20:07Z — Created persistent agent rules and project state from live Git/files/model facts; corrected completion assessment to approximately 22% against the supplied full master plan — build/test not run yet for these documentation changes.
