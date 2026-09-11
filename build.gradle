@@ -21,6 +21,7 @@ plugins {
 }
 
 def modelDir = file('models')
+def arm64Only = project.hasProperty('arm64Only')
 
 android {
     namespace 'org.attendanceai'
@@ -50,6 +51,17 @@ android {
 
     buildFeatures {
         compose true
+    }
+
+    // Optional device-test build: ./gradlew assembleDebug -Parm64Only
+    // produces an APK containing only the arm64-v8a native libraries.
+    splits {
+        abi {
+            enable arm64Only
+            reset()
+            include 'arm64-v8a'
+            universalApk false
+        }
     }
 
     kotlinOptions {
