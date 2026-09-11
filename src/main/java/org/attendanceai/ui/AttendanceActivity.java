@@ -8,13 +8,14 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.graphics.SurfaceTexture;
+
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.util.AttributeSet;
 import android.view.Surface;
-
-import android.view.TextureView;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -65,7 +66,7 @@ public final class AttendanceActivity extends AppCompatActivity {
     private TextView logView;
     private Button startButton;
     private Button enrollButton;
-    private TextureView previewView;
+    private SurfaceView previewView;
     private Surface previewSurface;
     private String lastStatus = "";
     private long lastStatusLogMs;
@@ -201,33 +202,25 @@ public final class AttendanceActivity extends AppCompatActivity {
         subtitle.setTextColor(0xFF66738D);
         root.addView(subtitle);
 
-        previewView = new TextureView(this);
+        previewView = new SurfaceView(this);
         previewView.setBackground(roundBackground(0xFFCBD6E8, 22));
         previewView.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
-        previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+        previewView.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
-            public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
-                previewSurface = new Surface(surface);
+            public void surfaceCreated(SurfaceHolder holder) {
+                // SurfaceView owns this Surface; Camera2 only borrows it while running.
+                previewSurface = holder.getSurface();
             }
 
             @Override
-            public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
-                // Camera2 continues to scale the preview into this surface.
+            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+                // Camera2 scales the preview into the holder surface.
             }
 
             @Override
-            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
-                if (previewSurface != null) {
-                    previewSurface.release();
-                    previewSurface = null;
-                }
-                return true;
-            }
-
-            @Override
-            public void onSurfaceTextureUpdated(SurfaceTexture surface) {
-                // No per-frame UI work; analysis frames use ImageReader.
+            public void surfaceDestroyed(SurfaceHolder holder) {
+                previewSurface = null;
             }
         });
         root.addView(previewView);
@@ -461,8 +454,8 @@ public final class AttendanceActivity extends AppCompatActivity {
                 log("camera permission granted");
                 startCamera();
             } else {
-                log("camera permission denied — using simulated camera");
-                startCamera();
+                resultView.setText("Camera permission is required to start the camera");
+                log("camera permission denied — camera remains stopped");
             }
         }
     }
@@ -493,10 +486,7 @@ public final class AttendanceActivity extends AppCompatActivity {
         if (pipeline != null) {
             pipeline.close();
         }
-        if (previewSurface != null) {
-            previewSurface.release();
-            previewSurface = null;
-        }
+        previewSurface = null;
         engine.shutdownNow();
         super.onDestroy();
     }
@@ -507,6 +497,28 @@ public final class AttendanceActivity extends AppCompatActivity {
     private static final class ColumnLayout extends ViewGroup {
         ColumnLayout(android.content.Context context) {
             super(context);
+        }
+
+        @Override
+        protected ViewGroup.LayoutParams generateDefaultLayoutParams() {
+            return new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+
+        @Override
+        public ViewGroup.LayoutParams generateLayoutParams(AttributeSet attrs) {
+            return new ViewGroup.LayoutParams(getContext(), attrs);
+        }
+
+        @Override
+        protected ViewGroup.LayoutParams generateLayoutParams(ViewGroup.LayoutParams params) {
+            return new ViewGroup.LayoutParams(params);
+        }
+
+        @Override
+        protected boolean checkLayoutParams(ViewGroup.LayoutParams params) {
+            return params != null;
         }
 
         @Override
