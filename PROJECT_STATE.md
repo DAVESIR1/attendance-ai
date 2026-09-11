@@ -1,7 +1,7 @@
 # Attendance AI — Project State
 (Single source of truth for "where are we." Read AGENT_RULES.md first, always.)
 
-Last updated: 2026-09-12T01:20:00Z
+Last updated: 2026-09-12T01:25:00Z
 Last updated by: GPT-5.6 Luna / Zed on Linux
 
 ## A. Stage Progress (fill in real status for each, from actual git tags/files/tests)
@@ -18,9 +18,9 @@ Last updated by: GPT-5.6 Luna / Zed on Linux
 
 ## B. Repo Facts (query these live, don't assume)
 - Current branch: `main`
-- Latest code commit (hash + message): `8adb5cc fix(startup): isolate face pipeline initialization failures`; state follow-up is local only
+- Latest code commit (hash + message): `c571876 fix(diagnostics): version startup diagnostic APK`; state follow-up is local only
 - All tags: `phase-1-complete`, `phase-2-complete`
-- Uncommitted local changes (list files or "none"): `build.gradle`, `src/main/java/org/attendanceai/presentation/lockscreen/LockScreenActivity.kt`, `src/main/java/org/attendanceai/presentation/lockscreen/LockScreenScreen.kt`, `src/main/java/org/attendanceai/ui/AttendanceActivity.java`, `PROJECT_STATE.md` (ready for local commit)
+- Uncommitted local changes (list files or "none"): `PROJECT_STATE.md` (state-only follow-up)
 - Known model files present in models/ (with checksums if available): `face_landmarker.task` — SHA-256 `64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff`; `mobilefacenet.tflite` — SHA-256 `d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b`; `models/checksums.sha256` contains both verified entries
 - CI status of last push (if checkable): workflow configuration is present in `.github/workflows/android.yml`; live GitHub Actions status was not checked in this environment
 
@@ -39,5 +39,5 @@ Wait for retest of the explicitly versioned `0.1.1-diagnostic` APK. Confirm the 
 - `src/main/java/org/attendanceai/camera/Camera2Backend.java` is an intentional Camera2 implementation despite the newer plan preferring CameraX; keep until the camera layer migration is planned.
 
 ## F. Log (append-only, newest entry on top, keep last ~20 entries, trim older ones)
-- 2026-09-12T01:20:00Z — Diagnostic build validated: `assembleDebug`, `testDebugUnitTest`, `assembleDebugAndroidTest`, diagnostics, and arm64 APK packaging passed. `aapt` confirms package versionCode `2`, versionName `0.1.1-diagnostic`; APK SHA-256 `64fe0eee84c3b597816c3a7d187729a366798fe9cb9650a3bc7c50f9cbe581ae`. Build labels and diagnostic exception classes are now visible.
+- 2026-09-12T01:25:00Z — Committed versioned startup diagnostics as `c571876` (`fix(diagnostics): version startup diagnostic APK`). New APK is explicitly versionCode 2/versionName `0.1.1-diagnostic`; no remote push performed.
 - 2026-09-11T14:20:07Z — Created persistent agent rules and project state from live Git/files/model facts; corrected completion assessment to approximately 22% against the supplied full master plan — build/test not run yet for these documentation changes.
