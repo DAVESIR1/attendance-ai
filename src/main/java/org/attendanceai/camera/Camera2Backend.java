@@ -19,7 +19,8 @@ import android.util.Log;
 import android.view.Surface;
 
 import java.nio.ByteBuffer;
-import java.util.Collections;
+import java.util.Arrays;
+
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -46,17 +47,24 @@ public final class Camera2Backend implements CameraBackend {
     private CameraManager cameraManager;
     private CameraDevice cameraDevice;
     private CameraCaptureSession captureSession;
+    private Surface previewSurface;
 
     public Camera2Backend(Context context) {
         this.context = context;
     }
 
     @Override
-    public boolean start(FrameListener listener, int width, int height) {
+    public boolean start(FrameListener listener, int width, int height, Surface preview) {
         if (running.getAndSet(true)) {
             return true;
         }
         this.listener = listener;
+        this.previewSurface = preview;
+        if (preview == null) {
+            Log.e(TAG, "camera preview surface unavailable");
+            running.set(false);
+            return false;
+        }
         try {
             Object service = context.getSystemService(Context.CAMERA_SERVICE);
             if (!(service instanceof CameraManager)) {
@@ -159,12 +167,18 @@ public final class Camera2Backend implements CameraBackend {
 
     private void configureSession(CameraDevice device) {
         try {
+            ImageReader activeReader = reader;
+            Surface activePreview = previewSurface;
+            if (activeReader == null || activePreview == null) {
+                throw new IllegalStateException("camera surfaces unavailable");
+            }
             CaptureRequest.Builder builder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            builder.addTarget(reader.getSurface());
+            builder.addTarget(activePreview);
+            builder.addTarget(activeReader.getSurface());
             CaptureRequest request = builder.build();
 
             device.createCaptureSession(
-                    Collections.<Surface>singletonList(reader.getSurface()),
+                    Arrays.asList(activePreview, activeReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(CameraCaptureSession session) {
@@ -238,6 +252,7 @@ public final class Camera2Backend implements CameraBackend {
         }
         ImageReader oldReader = reader;
         reader = null;
+        previewSurface = null;
         if (oldReader != null) {
             oldReader.close();
         }

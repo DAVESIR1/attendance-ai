@@ -8,9 +8,13 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.SurfaceTexture;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.view.Surface;
+
+import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -32,7 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.attendanceai.camera.Camera2Backend;
 import org.attendanceai.camera.CameraBackend;
 import org.attendanceai.camera.CameraFrame;
-import org.attendanceai.camera.SimulatedCameraBackend;
+
 import org.attendanceai.pipeline.FacePipeline;
 import org.attendanceai.presentation.lockscreen.LockScreenActivity;
 import org.attendanceai.presentation.lockscreen.SecurityGate;
@@ -60,6 +64,10 @@ public final class AttendanceActivity extends AppCompatActivity {
     private TextView logView;
     private Button startButton;
     private Button enrollButton;
+    private TextureView previewView;
+    private Surface previewSurface;
+    private String lastStatus = "";
+    private long lastStatusLogMs;
 
     private final ExecutorService engine = Executors.newSingleThreadExecutor();
     private final AtomicBoolean enqueued = new AtomicBoolean(false);
@@ -139,6 +147,37 @@ public final class AttendanceActivity extends AppCompatActivity {
         subtitle.setTextColor(0xFF66738D);
         root.addView(subtitle);
 
+        previewView = new TextureView(this);
+        previewView.setBackground(roundBackground(0xFFCBD6E8, 22));
+        previewView.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
+        previewView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
+                previewSurface = new Surface(surface);
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
+                // Camera2 continues to scale the preview into this surface.
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
+                if (previewSurface != null) {
+                    previewSurface.release();
+                    previewSurface = null;
+                }
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture surface) {
+                // No per-frame UI work; analysis frames use ImageReader.
+            }
+        });
+        root.addView(previewView);
+
         banner = cardText(12f, 0xFF66738D);
         root.addView(banner);
 
@@ -192,6 +231,10 @@ public final class AttendanceActivity extends AppCompatActivity {
         return button;
     }
 
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     private GradientDrawable roundBackground(int color, int radiusDp) {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setColor(color);
@@ -217,19 +260,28 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     private void presentResult(FacePipeline.PipelineResult result) {
         if (result.error) {
-            resultView.setTextColor(0xFFFF6B6B);
+            resultView.setTextColor(0xFFC23B5A);
             resultView.setText("! " + result.status);
-            log("error: " + result.status);
+            logStatus("error: " + result.status);
             return;
         }
-        resultView.setTextColor(Color.WHITE);
+        resultView.setTextColor(0xFF1D2942);
         if (result.matchedPersonId.length() > 0) {
             resultView.setText("✓ " + result.matchedName + "  (sim "
                     + String.format("%.2f", result.score) + ")  " + result.status);
-            log("match: " + result.matchedName + " @" + String.format("%.2f", result.score));
+            logStatus("match: " + result.matchedName + " @" + String.format("%.2f", result.score));
         } else {
             resultView.setText(result.status);
-            log(result.status);
+            logStatus(result.status);
+        }
+    }
+
+    private void logStatus(String status) {
+        long now = System.currentTimeMillis();
+        if (!status.equals(lastStatus) || now - lastStatusLogMs >= 1500L) {
+            lastStatus = status;
+            lastStatusLogMs = now;
+            log(status);
         }
     }
 
@@ -250,21 +302,23 @@ public final class AttendanceActivity extends AppCompatActivity {
             log("camera permission not granted");
             return;
         }
+        if (previewSurface == null) {
+            resultView.setText("Camera preview is still loading — please try again");
+            log("camera preview is not ready");
+            return;
+        }
         CameraBackend backend = new Camera2Backend(this);
         boolean ok;
         try {
-            ok = backend.start(this::submitFrame, 640, 480);
+            ok = backend.start(this::submitFrame, 640, 480, previewSurface);
         } catch (RuntimeException e) {
             log("camera unavailable — using safe fallback");
             ok = false;
         }
         if (!ok) {
-            log("no camera — starting simulated camera");
-            backend = new SimulatedCameraBackend();
-            if (!backend.start(this::submitFrame, 640, 480)) {
-                log("camera fallback unavailable");
-                return;
-            }
+            resultView.setText("Camera could not be opened");
+            log("camera unavailable — no simulated frames started");
+            return;
         }
         camera = backend;
         running = true;
@@ -299,8 +353,12 @@ public final class AttendanceActivity extends AppCompatActivity {
             camera = null;
         }
         running = false;
-        startButton.setText("Start camera");
-        log("camera stopped");
+        if (startButton != null) {
+            startButton.setText("Start camera");
+        }
+        if (logView != null) {
+            log("camera stopped");
+        }
     }
 
     private void enrol() {
@@ -368,6 +426,10 @@ public final class AttendanceActivity extends AppCompatActivity {
         if (pipeline != null) {
             pipeline.close();
         }
+        if (previewSurface != null) {
+            previewSurface.release();
+            previewSurface = null;
+        }
         engine.shutdownNow();
         super.onDestroy();
     }
@@ -393,7 +455,11 @@ public final class AttendanceActivity extends AppCompatActivity {
             for (int i = 0; i < count; i++) {
                 View child = getChildAt(i);
                 int specHeight = View.MeasureSpec.UNSPECIFIED;
-                if (i == count - 1) {
+                ViewGroup.LayoutParams params = child.getLayoutParams();
+                if (params != null && params.height > 0) {
+                    specHeight = View.MeasureSpec.makeMeasureSpec(params.height,
+                            View.MeasureSpec.EXACTLY);
+                } else if (i == count - 1) {
                     specHeight = View.MeasureSpec.makeMeasureSpec(
                             Math.max(0, contentHeight - (y - top)),
                             View.MeasureSpec.EXACTLY);

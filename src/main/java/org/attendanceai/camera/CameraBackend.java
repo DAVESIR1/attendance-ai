@@ -4,6 +4,8 @@
  */
 package org.attendanceai.camera;
 
+import android.view.Surface;
+
 /**
  * Compression point for the capture layer. The UI and pipeline only talk to
  * this interface, so the deprecated Camera2 implementation can later be
@@ -20,7 +22,18 @@ public interface CameraBackend {
      * Starts the camera. Returns false when no usable camera exists
      * (permission denied, no camera hardware, init failure).
      */
-    boolean start(FrameListener listener, int width, int height);
+    default boolean start(FrameListener listener, int width, int height) {
+        return start(listener, width, height, null);
+    }
+
+    /**
+     * Starts capture and optionally renders the live preview to [preview].
+     * Implementations that do not support a preview may use the three-argument
+     * method; the production Camera2 backend uses both preview and analysis.
+     */
+    default boolean start(FrameListener listener, int width, int height, Surface preview) {
+        return start(listener, width, height);
+    }
 
     /** Stops the camera and releases all resources. Safe to call twice. */
     void stop();
