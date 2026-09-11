@@ -1,7 +1,7 @@
 # Attendance AI — Project State
 (Single source of truth for "where are we." Read AGENT_RULES.md first, always.)
 
-Last updated: 2026-09-12T00:10:00Z
+Last updated: 2026-09-12T00:35:00Z
 Last updated by: GPT-5.6 Luna / Zed on Linux
 
 ## A. Stage Progress (fill in real status for each, from actual git tags/files/tests)
@@ -20,12 +20,12 @@ Last updated by: GPT-5.6 Luna / Zed on Linux
 - Current branch: `main`
 - Latest code commit (hash + message): `15d1233 fix(lock): show startup failures instead of closing`; state follow-up is local only
 - All tags: `phase-1-complete`, `phase-2-complete`
-- Uncommitted local changes (list files or "none"): `PROJECT_STATE.md` (state-only follow-up)
+- Uncommitted local changes (list files or "none"): `src/main/java/org/attendanceai/ui/AttendanceActivity.java`, `PROJECT_STATE.md` (ready for local commit)
 - Known model files present in models/ (with checksums if available): `face_landmarker.task` — SHA-256 `64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff`; `mobilefacenet.tflite` — SHA-256 `d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b`; `models/checksums.sha256` contains both verified entries
 - CI status of last push (if checkable): workflow configuration is present in `.github/workflows/android.yml`; live GitHub Actions status was not checked in this environment
 
 ## C. Next Action (THE MOST IMPORTANT LINE — always keep this accurate and specific)
-Wait for phone retest of the new APK; if unlock still closes, ask for the exact visible startup error or logcat output instead of silently changing the security flow again.
+Wait for phone retest of the newest APK. Report whether the main shell opens; if not, report the exact phase shown in the error screen (`encrypted session`, `encrypted attendance store`, or `face recognition pipeline`).
 
 ## D. Open Decisions / Blockers
 - Gradle wrapper/dependency validation may be blocked in this environment because the wrapper distribution host previously failed DNS resolution; retry before claiming Phase 2 green.
@@ -39,5 +39,5 @@ Wait for phone retest of the new APK; if unlock still closes, ask for the exact 
 - `src/main/java/org/attendanceai/camera/Camera2Backend.java` is an intentional Camera2 implementation despite the newer plan preferring CameraX; keep until the camera layer migration is planned.
 
 ## F. Log (append-only, newest entry on top, keep last ~20 entries, trim older ones)
-- 2026-09-12T00:10:00Z — Committed visible unlock/startup failure handling as `15d1233` (`fix(lock): show startup failures instead of closing`). New APK is ready for phone retest; no remote push performed.
+- 2026-09-12T00:35:00Z — Validation passed after phase-specific startup handling: `assembleDebug`, `testDebugUnitTest`, `assembleDebugAndroidTest`, diagnostics, and arm64 packaging. New APK SHA-256 is `49dd414db31cdbe3732c664c9d80154798384d9b828c73e4bfe747be06692a38`. Face-pipeline failures no longer block the encrypted shell.
 - 2026-09-11T14:20:07Z — Created persistent agent rules and project state from live Git/files/model facts; corrected completion assessment to approximately 22% against the supplied full master plan — build/test not run yet for these documentation changes.

@@ -68,6 +68,7 @@ public final class AttendanceActivity extends AppCompatActivity {
     private Surface previewSurface;
     private String lastStatus = "";
     private long lastStatusLogMs;
+    private String initializationPhase = "secure session";
 
     private final ExecutorService engine = Executors.newSingleThreadExecutor();
     private final AtomicBoolean enqueued = new AtomicBoolean(false);
@@ -108,6 +109,7 @@ public final class AttendanceActivity extends AppCompatActivity {
     /** Original onCreate body — only executed once the vault is satisfied. */
     private void initAfterUnlock() {
         try {
+            initializationPhase = "encrypted session";
             AttendanceDatabase database = VaultSession.database();
             // Continue only when the lock flow has opened the encrypted Room
             // session. A security-gate flag without a database is fail-closed,
@@ -116,21 +118,35 @@ public final class AttendanceActivity extends AppCompatActivity {
                 showInitializationError("The encrypted session is not available yet.");
                 return;
             }
+
+            initializationPhase = "encrypted attendance store";
             buildContent();
             store = new AttendanceStore(getFilesDir(), database);
-            pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {
-                runOnUiThread(() -> presentResult(result));
-            });
-            banner.setText(bannerStatus());
+            initializationPhase = "face recognition pipeline";
+            try {
+                pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {
+                    runOnUiThread(() -> presentResult(result));
+                });
+                banner.setText(bannerStatus());
+            } catch (Throwable pipelineFailure) {
+                // Keep the secure attendance shell usable even when a native
+                // ML library/model is unavailable on a particular phone.
+                pipeline = null;
+                banner.setText("Encrypted storage ready • face model unavailable");
+                resultView.setText("Camera features need the face model to start");
+                log("face recognition pipeline unavailable");
+            }
+
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                     != PackageManager.PERMISSION_GRANTED) {
                 requestPermissions(new String[]{Manifest.permission.CAMERA},
                         PERMISSION_REQUEST_CAMERA);
             }
         } catch (Throwable failure) {
-            // Model, native-library, database, or migration failures must be
-            // actionable on screen rather than looking like an unlock failure.
-            showInitializationError("The secure app session could not be started.");
+            // Database, migration, or store failures must be actionable on
+            // screen rather than looking like an unlock failure.
+            showInitializationError(
+                    "The secure app session could not be started at: " + initializationPhase);
         }
     }
 
@@ -332,6 +348,11 @@ public final class AttendanceActivity extends AppCompatActivity {
         if (running) {
             return;
         }
+        if (pipeline == null) {
+            resultView.setText("Face model is unavailable; camera cannot start yet");
+            log("camera blocked because face model is unavailable");
+            return;
+        }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
             log("camera permission not granted");
@@ -397,6 +418,10 @@ public final class AttendanceActivity extends AppCompatActivity {
     }
 
     private void enrol() {
+        if (pipeline == null) {
+            log("enrollment blocked because face model is unavailable");
+            return;
+        }
         if (lastFrame == null) {
             log("no frame captured yet — cannot enrol");
             return;
@@ -410,6 +435,10 @@ public final class AttendanceActivity extends AppCompatActivity {
     }
 
     private void clearRoster() {
+        if (pipeline == null) {
+            log("roster controls are unavailable until the face model loads");
+            return;
+        }
         try {
             store.saveRoster(new java.util.LinkedHashMap<String, AttendanceStore.Person>());
             pipeline.reloadTemplates();
