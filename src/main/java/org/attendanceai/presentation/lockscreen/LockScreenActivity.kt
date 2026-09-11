@@ -19,7 +19,6 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
-import org.attendanceai.ui.AttendanceActivity
 
 /**
  * Security role: thin Android host for the lock screen. It owns the three
@@ -49,7 +48,9 @@ class LockScreenActivity : FragmentActivity() {
                 viewModel = viewModel,
                 biometric = BiometricAuthenticator(this),
                 onUnlocked = {
-                    startActivity(Intent(this, AttendanceActivity::class.java))
+                    // AttendanceActivity launched this screen for a result;
+                    // return only after the ViewModel has opened SQLCipher.
+                    setResult(RESULT_OK)
                     finish()
                 },
             )

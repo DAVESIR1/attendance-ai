@@ -20,6 +20,7 @@ import org.attendanceai.data.local.crypto.MnemonicValidator
 import org.attendanceai.data.local.crypto.PinRepository
 import org.attendanceai.data.local.crypto.SetupStage
 import org.attendanceai.data.local.crypto.VaultKeyBlob
+import org.attendanceai.data.local.db.VaultSession
 import java.security.SecureRandom
 
 /**
@@ -87,6 +88,7 @@ data class LockUiState(
  * wrong PINs only escalate the lockout — no code path erases user data.
  */
 class LockScreenViewModel(
+    private val appContext: android.content.Context,
     private val wordList: Bip39WordList,
     private val generator: MnemonicGenerator,
     private val pinRepository: PinRepository,
@@ -123,8 +125,7 @@ class LockScreenViewModel(
                 if (_state.value.showBiometricOption) {
                     LockStep.BiometricOptIn
                 } else {
-                    finalizeSetup()
-                    LockStep.Done
+                    if (finalizeSetup()) LockStep.Done else LockStep.PinSetup
                 }
             SetupStage.COMPLETE -> LockStep.VerifyPin
         }
@@ -135,12 +136,16 @@ class LockScreenViewModel(
                 pin = "",
                 pinConfirm = "",
                 restoreText = "",
-                error = null,
                 message = null,
                 attempts = pinRepository.failedAttempts(),
                 lockoutDeadlineMs = System.currentTimeMillis() +
                     pinRepository.remainingLockoutMs(),
                 biometricEnabled = pinRepository.isBiometricEnabled(),
+                error = if (step == LockStep.PinSetup && stage == SetupStage.PIN_SET) {
+                    "Encrypted database could not be opened; setup remains locked"
+                } else {
+                    null
+                },
             )
         }
     }
@@ -282,12 +287,24 @@ class LockScreenViewModel(
         }
         pinRepository.setPin(pin.toCharArray())
         pinRepository.setSetupStage(SetupStage.PIN_SET)
-        val next = if (current.showBiometricOption) LockStep.BiometricOptIn else {
+        val completed = if (current.showBiometricOption) {
+            false
+        } else {
             finalizeSetup()
-            LockStep.Done
         }
+        val next = if (current.showBiometricOption) LockStep.BiometricOptIn
+        else if (completed) LockStep.Done else LockStep.PinSetup
         _state.update {
-            it.copy(step = next, pin = "", pinConfirm = "", error = null)
+            it.copy(
+                step = next,
+                pin = "",
+                pinConfirm = "",
+                error = if (!current.showBiometricOption && !completed) {
+                    "Encrypted database could not be opened; setup remains locked"
+                } else {
+                    null
+                },
+            )
         }
     }
 
@@ -297,9 +314,15 @@ class LockScreenViewModel(
      */
     fun onBiometricOptInResult(enabled: Boolean) {
         pinRepository.setBiometricEnabled(enabled)
-        finalizeSetup()
+        val completed = finalizeSetup()
         _state.update {
-            it.copy(step = LockStep.Done, message = if (enabled) "Biometric unlock enabled" else null)
+            it.copy(
+                step = if (completed) LockStep.Done else LockStep.BiometricOptIn,
+                message = if (completed && enabled) "Biometric unlock enabled" else null,
+                error = if (completed) null else {
+                    "Encrypted database could not be opened; setup remains locked"
+                },
+            )
         }
     }
 
@@ -316,8 +339,17 @@ class LockScreenViewModel(
         if (current.pin.isEmpty()) return
         if (pinRepository.verifyPin(current.pin.toCharArray())) {
             pinRepository.resetFailedAttempts()
-            SecurityGate.markUnlockedForSession()
-            _state.update { it.copy(step = LockStep.Done, pin = "", error = null, message = null) }
+            if (openVaultForSession()) {
+                SecurityGate.markUnlockedForSession()
+                _state.update { it.copy(step = LockStep.Done, pin = "", error = null, message = null) }
+            } else {
+                _state.update {
+                    it.copy(
+                        pin = "",
+                        error = "PIN accepted, but the encrypted database could not be opened",
+                    )
+                }
+            }
         } else {
             val deadline = pinRepository.registerFailedAttempt()
             val attempts = pinRepository.failedAttempts()
@@ -335,14 +367,41 @@ class LockScreenViewModel(
     /** Biometric unlock (system prompt already rate-limits attempts). */
     fun onBiometricUnlockSuccess() {
         pinRepository.resetFailedAttempts()
-        SecurityGate.markUnlockedForSession()
-        _state.update { it.copy(step = LockStep.Done, pin = "", error = null) }
+        if (openVaultForSession()) {
+            SecurityGate.markUnlockedForSession()
+            _state.update { it.copy(step = LockStep.Done, pin = "", error = null) }
+        } else {
+            _state.update {
+                it.copy(error = "Biometric accepted, but the encrypted database could not be opened")
+            }
+        }
     }
 
-    /** Marks setup COMPLETE (persisted) and unlocks this session. */
-    private fun finalizeSetup() {
+    /** Opens the encrypted vault before marking setup COMPLETE or the session unlocked. */
+    private fun finalizeSetup(): Boolean {
+        if (!openVaultForSession()) return false
         pinRepository.setSetupStage(SetupStage.COMPLETE)
         SecurityGate.markUnlockedForSession()
+        return true
+    }
+
+    /**
+     * Unwraps the vault key only for the duration of opening SQLCipher.
+     * A missing/corrupt wrapped blob or any database-opening failure returns
+     * false so callers can keep the app locked without exposing the cause.
+     */
+    private fun openVaultForSession(): Boolean {
+        val blob = pinRepository.wrappedKey() ?: return false
+        var rawKey: ByteArray? = null
+        return try {
+            rawKey = keyManager.unwrap(KeyManager.WrappedKey.decode(blob.wrapped))
+            VaultSession.open(appContext, rawKey!!)
+            true
+        } catch (_: Throwable) {
+            false
+        } finally {
+            rawKey?.fill(0)
+        }
     }
 
     companion object {
@@ -368,6 +427,7 @@ class LockScreenViewModel(
                     require(modelClass.isAssignableFrom(LockScreenViewModel::class.java))
                     val wordList = Bip39WordList.fromAssets(appContext)
                     return LockScreenViewModel(
+                        appContext = appContext,
                         wordList = wordList,
                         generator = MnemonicGenerator(wordList, SecureRandom()),
                         pinRepository = PinRepository(appContext),

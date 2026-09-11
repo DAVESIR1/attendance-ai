@@ -11,6 +11,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.attendanceai.data.local.db.AttendanceDatabase;
+import org.attendanceai.data.local.db.RoomAttendanceStore;
+
 /**
  * Versioned JSON persistence for the attendance data model, stored in the
  * app's private directory. Every write is atomic (tmp + rename) so a crash
@@ -26,9 +29,17 @@ public final class AttendanceStore {
     public static final int VERSION = 1;
 
     private final File dir;
+    private final RoomAttendanceStore encrypted;
 
+    /** Creates the legacy JSON store, retained for migration and JVM tests. */
     public AttendanceStore(File dir) {
+        this(dir, null);
+    }
+
+    /** Creates a store backed by the already-unlocked SQLCipher database. */
+    public AttendanceStore(File dir, AttendanceDatabase database) {
         this.dir = dir;
+        this.encrypted = database == null ? null : new RoomAttendanceStore(database);
     }
 
     public File directory() {
@@ -39,6 +50,9 @@ public final class AttendanceStore {
 
     /** Loads the roster; returns an empty map (never null) when absent. */
     public Map<String, Person> loadRoster() {
+        if (encrypted != null) {
+            return encrypted.loadRoster();
+        }
         Map<String, Person> people = new LinkedHashMap<String, Person>();
         File file = rosterFile();
         if (!file.isFile()) {
@@ -67,6 +81,10 @@ public final class AttendanceStore {
 
     /** Persists the roster atomically. */
     public void saveRoster(Map<String, Person> people) throws IOException {
+        if (encrypted != null) {
+            encrypted.saveRoster(people);
+            return;
+        }
         List<Object> list = new ArrayList<Object>(people.size());
         for (Person person : people.values()) {
             Map<String, Object> entry = new LinkedHashMap<String, Object>();
@@ -87,6 +105,9 @@ public final class AttendanceStore {
 
     /** Loads attendance records, newest last. Never null. */
     public List<Record> loadRecords() {
+        if (encrypted != null) {
+            return encrypted.loadRecords();
+        }
         List<Record> records = new ArrayList<Record>();
         File file = recordsFile();
         if (!file.isFile()) {
@@ -111,6 +132,10 @@ public final class AttendanceStore {
 
     /** Appends a record (read-modify-write, atomic). */
     public void appendRecord(Record record) throws IOException {
+        if (encrypted != null) {
+            encrypted.appendRecord(record);
+            return;
+        }
         List<Map<String, Object>> list = new ArrayList<Map<String, Object>>();
         for (Record old : loadRecords()) {
             Map<String, Object> entry = new LinkedHashMap<String, Object>();
@@ -136,6 +161,9 @@ public final class AttendanceStore {
     // ------------------------------------------------------------ settings
 
     public Settings loadSettings() {
+        if (encrypted != null) {
+            return encrypted.loadSettings();
+        }
         Settings settings = new Settings();
         File file = settingsFile();
         if (!file.isFile()) {
@@ -151,6 +179,10 @@ public final class AttendanceStore {
     }
 
     public void saveSettings(Settings settings) throws IOException {
+        if (encrypted != null) {
+            encrypted.saveSettings(settings);
+            return;
+        }
         Map<String, Object> root = new LinkedHashMap<String, Object>();
         root.put("version", (long) VERSION);
         root.put("settings", settings.toMap());

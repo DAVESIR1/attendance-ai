@@ -16,6 +16,7 @@
 plugins {
     id 'com.android.application' version '8.9.1'
     id 'org.jetbrains.kotlin.android' version '2.0.21'
+    id 'org.jetbrains.kotlin.kapt' version '2.0.21'
     id 'org.jetbrains.kotlin.plugin.compose' version '2.0.21'
 }
 
@@ -32,6 +33,7 @@ android {
         targetSdk 35
         versionCode 1
         versionName '0.1.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
     compileOptions {
@@ -91,8 +93,18 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6'
     // EncryptedSharedPreferences-backed PIN/seed storage (androidx security-crypto)
     implementation 'androidx.security:security-crypto:1.1.0-alpha06'
+    // Room + SQLCipher: encrypted relational storage for people, groups and attendance.
+    implementation 'androidx.room:room-runtime:2.6.1'
+    implementation 'androidx.room:room-ktx:2.6.1'
+    kapt 'androidx.room:room-compiler:2.6.1'
+    implementation 'net.zetetic:android-database-sqlcipher:4.5.4'
     // BiometricManager / BiometricPrompt for the biometric opt-in + unlock
     implementation 'androidx.biometric:biometric:1.1.0'
+
+    // Instrumented Room/SQLCipher integration tests.
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
 }
 
 // kotlin-stdlib-jdk7/jdk8 content was merged into kotlin-stdlib in Kotlin 1.8;

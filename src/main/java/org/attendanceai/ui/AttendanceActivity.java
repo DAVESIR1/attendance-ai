@@ -33,6 +33,8 @@ import org.attendanceai.camera.SimulatedCameraBackend;
 import org.attendanceai.pipeline.FacePipeline;
 import org.attendanceai.presentation.lockscreen.LockScreenActivity;
 import org.attendanceai.presentation.lockscreen.SecurityGate;
+import org.attendanceai.data.local.db.AttendanceDatabase;
+import org.attendanceai.data.local.db.VaultSession;
 import org.attendanceai.store.AttendanceStore;
 
 /**
@@ -94,8 +96,15 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     /** Original onCreate body — only executed once the vault is satisfied. */
     private void initAfterUnlock() {
+        AttendanceDatabase database = VaultSession.database();
+        // Continue only when the lock flow has opened the encrypted Room
+        // session. A security-gate flag without a database is fail-closed.
+        if (SecurityGate.lockRequired() || database == null) {
+            finish();
+            return;
+        }
         buildContent();
-        store = new AttendanceStore(getFilesDir());
+        store = new AttendanceStore(getFilesDir(), database);
         pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {
             runOnUiThread(() -> presentResult(result));
         });
@@ -290,12 +299,20 @@ public final class AttendanceActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        banner.setText(bannerStatus());
+        // The activity is resumed once while the lock screen is displayed,
+        // before initAfterUnlock() has created the content views.
+        if (banner != null && pipeline != null && store != null) {
+            banner.setText(bannerStatus());
+        }
     }
 
     @Override
     protected void onPause() {
-        stopCamera();
+        // The lock screen is launched before the main UI is initialised.
+        // Avoid touching the camera/UI during that first pause callback.
+        if (camera != null || running) {
+            stopCamera();
+        }
         super.onPause();
     }
 
