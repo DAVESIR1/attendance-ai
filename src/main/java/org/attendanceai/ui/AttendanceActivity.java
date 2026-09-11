@@ -107,24 +107,59 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     /** Original onCreate body — only executed once the vault is satisfied. */
     private void initAfterUnlock() {
-        AttendanceDatabase database = VaultSession.database();
-        // Continue only when the lock flow has opened the encrypted Room
-        // session. A security-gate flag without a database is fail-closed.
-        if (SecurityGate.lockRequired() || database == null) {
-            finish();
-            return;
+        try {
+            AttendanceDatabase database = VaultSession.database();
+            // Continue only when the lock flow has opened the encrypted Room
+            // session. A security-gate flag without a database is fail-closed,
+            // but it must remain visible instead of silently finishing.
+            if (SecurityGate.lockRequired() || database == null) {
+                showInitializationError("The encrypted session is not available yet.");
+                return;
+            }
+            buildContent();
+            store = new AttendanceStore(getFilesDir(), database);
+            pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {
+                runOnUiThread(() -> presentResult(result));
+            });
+            banner.setText(bannerStatus());
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(new String[]{Manifest.permission.CAMERA},
+                        PERMISSION_REQUEST_CAMERA);
+            }
+        } catch (Throwable failure) {
+            // Model, native-library, database, or migration failures must be
+            // actionable on screen rather than looking like an unlock failure.
+            showInitializationError("The secure app session could not be started.");
         }
-        buildContent();
-        store = new AttendanceStore(getFilesDir(), database);
-        pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {
-            runOnUiThread(() -> presentResult(result));
-        });
-        banner.setText(bannerStatus());
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.CAMERA},
-                    PERMISSION_REQUEST_CAMERA);
-        }
+    }
+
+    private void showInitializationError(String message) {
+        ColumnLayout errorRoot = new ColumnLayout(this);
+        errorRoot.setPadding(24, 32, 24, 24);
+        errorRoot.setBackground(new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{0xFFE8E5FF, 0xFFF4F7FC, 0xFFFFE9EF}));
+
+        TextView title = new TextView(this);
+        title.setText("Attendance AI");
+        title.setTextSize(28f);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setTextColor(0xFF1D2942);
+        errorRoot.addView(title);
+
+        TextView body = cardText(16f, 0xFF1D2942);
+        body.setText(message + "\n\nYour recovery phrase and stored data were not deleted.");
+        errorRoot.addView(body);
+
+        Button retry = actionButton("Try again", 0xFF6D5DF5);
+        retry.setOnClickListener(v -> recreate());
+        errorRoot.addView(retry);
+
+        Button close = actionButton("Close", 0xFF9A79D9);
+        close.setOnClickListener(v -> finish());
+        errorRoot.addView(close);
+        setContentView(errorRoot);
     }
 
     private void buildContent() {

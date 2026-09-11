@@ -14,6 +14,18 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
@@ -38,9 +50,18 @@ class LockScreenActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         viewModel = try {
             ViewModelProvider(this, buildViewModelFactory())[LockScreenViewModel::class.java]
-        } catch (t: Throwable) {
-            // Fail closed: no vault, no app. The screen closes itself.
-            finish()
+        } catch (_: Throwable) {
+            // Keep the user on a visible recovery screen instead of silently
+            // closing; no secret or exception text is shown.
+            setContent {
+                LockStartupErrorScreen(
+                    onRetry = { recreate() },
+                    onClose = {
+                        setResult(RESULT_CANCELED)
+                        finish()
+                    },
+                )
+            }
             return
         }
         setContent {
@@ -83,6 +104,27 @@ class LockScreenActivity : FragmentActivity() {
         @JvmStatic
         fun createIntent(context: Context): Intent =
             Intent(context, LockScreenActivity::class.java)
+    }
+}
+
+/** Visible, non-secret error state for lock-screen initialization failures. */
+@Composable
+private fun LockStartupErrorScreen(onRetry: () -> Unit, onClose: () -> Unit) {
+    Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF4F7FC)) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text("Attendance AI", style = MaterialTheme.typography.headlineSmall,
+                color = Color(0xFF1D2942))
+            Text(
+                "The secure screen could not be prepared. Your data was not changed. " +
+                    "Try again, or clear app data only if you have saved your recovery phrase.",
+                color = Color(0xFF66738D),
+            )
+            Button(onClick = onRetry) { Text("Try again") }
+            Button(onClick = onClose) { Text("Close") }
+        }
     }
 }
 
