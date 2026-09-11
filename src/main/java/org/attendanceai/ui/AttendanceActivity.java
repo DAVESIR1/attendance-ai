@@ -8,6 +8,8 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,6 +26,7 @@ import java.io.File;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.attendanceai.camera.Camera2Backend;
@@ -118,47 +121,82 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     private void buildContent() {
         root = new ColumnLayout(this);
+        root.setPadding(20, 24, 20, 20);
+        root.setBackground(new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{0xFFE8E5FF, 0xFFF4F7FC, 0xFFE2F7F2}));
 
         TextView title = new TextView(this);
         title.setText("Attendance AI");
-        title.setTextSize(26f);
-        title.setTextColor(Color.WHITE);
+        title.setTextSize(28f);
+        title.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        title.setTextColor(0xFF1D2942);
         root.addView(title);
 
-        banner = new TextView(this);
-        banner.setTextSize(12f);
-        banner.setTextColor(0xFF9AE6FF);
+        TextView subtitle = new TextView(this);
+        subtitle.setText("Private • Offline • Encrypted");
+        subtitle.setTextSize(14f);
+        subtitle.setTextColor(0xFF66738D);
+        root.addView(subtitle);
+
+        banner = cardText(12f, 0xFF66738D);
         root.addView(banner);
 
-        resultView = new TextView(this);
-        resultView.setTextSize(16f);
-        resultView.setTextColor(Color.WHITE);
+        resultView = cardText(16f, 0xFF1D2942);
         root.addView(resultView);
 
-        startButton = new Button(this);
-        startButton.setText("Start camera");
+        startButton = actionButton("Start camera", 0xFF6D5DF5);
         startButton.setOnClickListener(v -> toggleCamera());
         root.addView(startButton);
 
-        enrollButton = new Button(this);
-        enrollButton.setText("Enrol current face");
+        enrollButton = actionButton("Enrol current face", 0xFF28B8A6);
         enrollButton.setOnClickListener(v -> enrol());
         root.addView(enrollButton);
 
-        Button clear = new Button(this);
-        clear.setText("Clear roster");
+        Button clear = actionButton("Clear roster", 0xFF9A79D9);
         clear.setOnClickListener(v -> clearRoster());
         root.addView(clear);
 
         ScrollView scroller = new ScrollView(this);
         scroller.setFillViewport(true);
+        scroller.setBackground(roundBackground(0xDFFFFFFF, 22));
+        scroller.setPadding(16, 14, 16, 14);
         logView = new TextView(this);
         logView.setTextSize(12f);
-        logView.setTextColor(0xFFCCCCCC);
+        logView.setTextColor(0xFF66738D);
         scroller.addView(logView);
         root.addView(scroller);
 
         setContentView(root);
+    }
+
+    private TextView cardText(float size, int color) {
+        TextView view = new TextView(this);
+        view.setTextSize(size);
+        view.setTextColor(color);
+        view.setPadding(16, 14, 16, 14);
+        view.setBackground(roundBackground(0xDFFFFFFF, 18));
+        return view;
+    }
+
+    private Button actionButton(String label, int color) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextSize(15f);
+        button.setTextColor(Color.WHITE);
+        button.setAllCaps(false);
+        button.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        button.setMinHeight(54);
+        button.setPadding(18, 8, 18, 8);
+        button.setBackground(roundBackground(color, 18));
+        return button;
+    }
+
+    private GradientDrawable roundBackground(int color, int radiusDp) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(radiusDp * getResources().getDisplayMetrics().density);
+        return drawable;
     }
 
     private String bannerStatus() {
@@ -213,38 +251,46 @@ public final class AttendanceActivity extends AppCompatActivity {
             return;
         }
         CameraBackend backend = new Camera2Backend(this);
-        boolean ok = backend.start(frame -> {
-            lastFrame = frame;
-            if (enqueued.compareAndSet(false, true)) {
-                engine.execute(() -> {
-                    try {
-                        pipeline.process(frame);
-                    } finally {
-                        enqueued.set(false);
-                    }
-                });
-            }
-        }, 640, 480);
+        boolean ok;
+        try {
+            ok = backend.start(this::submitFrame, 640, 480);
+        } catch (RuntimeException e) {
+            log("camera unavailable — using safe fallback");
+            ok = false;
+        }
         if (!ok) {
             log("no camera — starting simulated camera");
             backend = new SimulatedCameraBackend();
-            backend.start(frame -> {
-                lastFrame = frame;
-                if (enqueued.compareAndSet(false, true)) {
-                    engine.execute(() -> {
-                        try {
-                            pipeline.process(frame);
-                        } finally {
-                            enqueued.set(false);
-                        }
-                    });
-                }
-            }, 640, 480);
+            if (!backend.start(this::submitFrame, 640, 480)) {
+                log("camera fallback unavailable");
+                return;
+            }
         }
         camera = backend;
         running = true;
         startButton.setText("Stop camera");
         log("camera started");
+    }
+
+    private void submitFrame(CameraFrame frame) {
+        lastFrame = frame;
+        if (!enqueued.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            engine.execute(() -> {
+                try {
+                    if (pipeline != null) {
+                        pipeline.process(frame);
+                    }
+                } finally {
+                    enqueued.set(false);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            enqueued.set(false);
+            runOnUiThread(() -> log("camera stopped"));
+        }
     }
 
     private void stopCamera() {
@@ -338,20 +384,25 @@ public final class AttendanceActivity extends AppCompatActivity {
         protected void onLayout(boolean changed, int l, int t, int r, int b) {
             int width = r - l;
             int height = b - t;
-            int y = 0;
+            int left = getPaddingLeft();
+            int top = getPaddingTop();
+            int contentWidth = Math.max(0, width - getPaddingLeft() - getPaddingRight());
+            int contentHeight = Math.max(0, height - getPaddingTop() - getPaddingBottom());
+            int y = top;
             int count = getChildCount();
             for (int i = 0; i < count; i++) {
                 View child = getChildAt(i);
                 int specHeight = View.MeasureSpec.UNSPECIFIED;
                 if (i == count - 1) {
-                    specHeight = View.MeasureSpec.makeMeasureSpec(Math.max(0, height - y),
+                    specHeight = View.MeasureSpec.makeMeasureSpec(
+                            Math.max(0, contentHeight - (y - top)),
                             View.MeasureSpec.EXACTLY);
                 }
-                child.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
-                        specHeight);
+                child.measure(View.MeasureSpec.makeMeasureSpec(contentWidth,
+                                View.MeasureSpec.EXACTLY), specHeight);
                 int childHeight = child.getMeasuredHeight();
-                int bottom = Math.min(height, y + childHeight);
-                child.layout(0, y, width, bottom);
+                int bottom = Math.min(height - getPaddingBottom(), y + childHeight);
+                child.layout(left, y, left + contentWidth, bottom);
                 y += childHeight;
             }
         }

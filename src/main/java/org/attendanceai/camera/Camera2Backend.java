@@ -81,22 +81,34 @@ public final class Camera2Backend implements CameraBackend {
                     ImageReader.newInstance(width, height, ImageFormat.FLEX_RGBA_8888, 2);
             newReader.setOnImageAvailableListener(onImageAvailable -> {
                 FrameListener l = listener;
-                if (l == null || !running.get()) {
+                ImageReader activeReader = reader;
+                if (l == null || activeReader == null || !running.get()) {
                     return;
                 }
-                android.media.Image image = reader.acquireLatestImage();
-                if (image == null) {
-                    return;
-                }
+                android.media.Image image = null;
                 try {
+                    image = activeReader.acquireLatestImage();
+                    if (image == null) {
+                        return;
+                    }
                     int w = image.getWidth();
                     int h = image.getHeight();
+                    android.media.Image.Plane[] planes = image.getPlanes();
+                    if (planes.length == 0) {
+                        return;
+                    }
                     byte[] bytes = new byte[w * h * 4];
-                    copyPlaneRowMajor(image.getPlanes()[0], bytes, w, h);
+                    copyPlaneRowMajor(planes[0], bytes, w, h);
                     l.onFrame(CameraFrame.fromRgba(bytes, w, h,
                             System.currentTimeMillis()));
+                } catch (RuntimeException e) {
+                    // A device-specific stride/format must drop one frame, not
+                    // terminate the camera thread and close the whole app.
+                    Log.e(TAG, "camera frame dropped", e);
                 } finally {
-                    image.close();
+                    if (image != null) {
+                        image.close();
+                    }
                 }
             }, cameraHandler);
             reader = newReader;
@@ -111,19 +123,23 @@ public final class Camera2Backend implements CameraBackend {
                         @Override
                         public void onDisconnected(CameraDevice device) {
                             Log.w(TAG, "camera disconnected");
+                            running.set(false);
                             device.close();
+                            close();
                         }
 
                         @Override
                         public void onError(CameraDevice device, int error) {
                             Log.e(TAG, "camera error " + error);
+                            running.set(false);
                             close();
                         }
                     },
                     cameraHandler);
             return true;
-        } catch (CameraAccessException | SecurityException e) {
+        } catch (CameraAccessException | RuntimeException e) {
             Log.e(TAG, "failed to start camera", e);
+            running.set(false);
             close();
             return false;
         }
@@ -163,12 +179,14 @@ public final class Camera2Backend implements CameraBackend {
                         @Override
                         public void onConfigureFailed(CameraCaptureSession session) {
                             Log.e(TAG, "session configuration failed");
+                            running.set(false);
                             close();
                         }
                     },
                     cameraHandler);
-        } catch (CameraAccessException e) {
+        } catch (CameraAccessException | RuntimeException e) {
             Log.e(TAG, "failed to configure camera", e);
+            running.set(false);
             close();
         }
     }
@@ -176,15 +194,23 @@ public final class Camera2Backend implements CameraBackend {
     /** RGBA planes may carry row padding; pack tightly into 4 bytes/pixel. */
     private static void copyPlaneRowMajor(android.media.Image.Plane plane,
             byte[] out, int width, int height) {
-        ByteBuffer buffer = plane.getBuffer();
+        ByteBuffer buffer = plane.getBuffer().duplicate();
         int rowStride = plane.getRowStride();
         int pixelStride = plane.getPixelStride();
+        int base = buffer.position();
+        int limit = buffer.limit();
+        if (pixelStride < 4) {
+            throw new IllegalArgumentException("unsupported camera pixel stride");
+        }
         for (int y = 0; y < height; y++) {
             int rowOffset = y * rowStride;
             int outOffset = y * width * 4;
             for (int x = 0; x < width; x++) {
                 int ox = outOffset + x * 4;
-                int ix = rowOffset + x * pixelStride;
+                int ix = base + rowOffset + x * pixelStride;
+                if (ix < base || ix + 3 >= limit) {
+                    throw new IllegalArgumentException("camera buffer stride exceeds image bounds");
+                }
                 out[ox] = buffer.get(ix);
                 out[ox + 1] = buffer.get(ix + 1);
                 out[ox + 2] = buffer.get(ix + 2);

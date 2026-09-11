@@ -1,7 +1,7 @@
 # Attendance AI — Project State
 (Single source of truth for "where are we." Read AGENT_RULES.md first, always.)
 
-Last updated: 2026-09-11T16:50:00Z
+Last updated: 2026-09-11T18:00:00Z
 Last updated by: GPT-5.6 Luna / Zed on Linux
 
 ## A. Stage Progress (fill in real status for each, from actual git tags/files/tests)
@@ -18,14 +18,14 @@ Last updated by: GPT-5.6 Luna / Zed on Linux
 
 ## B. Repo Facts (query these live, don't assume)
 - Current branch: `main`
-- Latest code commit (hash + message): `443b02f chore(build): add arm64 debug test APK option`; a state-only follow-up commit will record this status
+- Latest commit (hash + message): `bb2ba1e chore(state): record arm64 APK artifact`
 - All tags: `phase-1-complete`, `phase-2-complete`
-- Uncommitted local changes (list files or "none"): `PROJECT_STATE.md` (state-only follow-up)
+- Uncommitted local changes (list files or "none"): `src/main/java/org/attendanceai/presentation/lockscreen/LockScreenScreen.kt`, `src/main/java/org/attendanceai/camera/Camera2Backend.java`, `src/main/java/org/attendanceai/ui/AttendanceActivity.java`, `src/main/res/values/colors.xml`, `src/main/res/values/themes.xml`, `PROJECT_STATE.md` (ready for local commit)
 - Known model files present in models/ (with checksums if available): `face_landmarker.task` — SHA-256 `64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff`; `mobilefacenet.tflite` — SHA-256 `d8ba40c0127fb8ca9917e8fddc79bbbda063657bc92a496d34da0bc8a760443b`; `models/checksums.sha256` contains both verified entries
 - CI status of last push (if checkable): workflow configuration is present in `.github/workflows/android.yml`; live GitHub Actions status was not checked in this environment
 
 ## C. Next Action (THE MOST IMPORTANT LINE — always keep this accurate and specific)
-Wait for the user's phone test results from `build/test-artifacts/attendance-ai-arm64-debug.apk`; then fix any reproducible issue before resuming Phase 2 device verification.
+Wait for the user's retest of the replacement APK at `build/test-artifacts/attendance-ai-arm64-debug.apk`; use any exact crash/error evidence to continue hardening before implementing the remaining Home/Groups/Reports UI.
 
 ## D. Open Decisions / Blockers
 - Gradle wrapper/dependency validation may be blocked in this environment because the wrapper distribution host previously failed DNS resolution; retry before claiming Phase 2 green.
@@ -39,5 +39,5 @@ Wait for the user's phone test results from `build/test-artifacts/attendance-ai-
 - `src/main/java/org/attendanceai/camera/Camera2Backend.java` is an intentional Camera2 implementation despite the newer plan preferring CameraX; keep until the camera layer migration is planned.
 
 ## F. Log (append-only, newest entry on top, keep last ~20 entries, trim older ones)
-- 2026-09-11T16:50:00Z — Committed arm64 build support as `443b02f`. APK remains available at `build/test-artifacts/attendance-ai-arm64-debug.apk` (38 MB, SHA-256 `9d926c13a220cabd5908d0d393cded5c6da5b9ce10d10bd4513edc0a8d32db9f`). Verified only `lib/arm64-v8a` native libraries; `assembleDebug`, `testDebugUnitTest`, and `assembleDebugAndroidTest` passed. No push performed.
+- 2026-09-11T18:00:00Z — Replacement arm64 APK built at `build/test-artifacts/attendance-ai-arm64-debug.apk` (38 MB, SHA-256 `cb2c6f8058d4562d02f92acd50149bafa85f8dd4017650c29d070b32a5f79096`). APK contains only `lib/arm64-v8a` native libraries. Diagnostics are clean; `assembleDebug`, `testDebugUnitTest`, and `assembleDebugAndroidTest` passed. UI/camera fix is ready for phone retest.
 - 2026-09-11T14:20:07Z — Created persistent agent rules and project state from live Git/files/model facts; corrected completion assessment to approximately 22% against the supplied full master plan — build/test not run yet for these documentation changes.

@@ -5,22 +5,36 @@
  */
 package org.attendanceai.presentation.lockscreen
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -28,12 +42,34 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+
+private val LockBackground = Color(0xFFF4F7FC)
+private val LockInk = Color(0xFF1D2942)
+private val LockMuted = Color(0xFF66738D)
+private val LockPrimary = Color(0xFF6D5DF5)
+private val LockSecondary = Color(0xFF28B8A6)
+private val LockError = Color(0xFFC23B5A)
+private val LockScheme = lightColorScheme(
+    primary = LockPrimary,
+    onPrimary = Color.White,
+    secondary = LockSecondary,
+    onSecondary = Color.White,
+    background = LockBackground,
+    onBackground = LockInk,
+    surface = Color.White,
+    onSurface = LockInk,
+    error = LockError,
+    onError = Color.White,
+)
 
 /**
  * Security role: the Compose rendering of the vault state machine. This
@@ -53,22 +89,108 @@ fun LockScreenScreen(
     LaunchedEffect(state.step) {
         if (state.step == LockStep.Done) onUnlocked()
     }
-    Column(
+    MaterialTheme(colorScheme = LockScheme) {
+        Surface(modifier = Modifier.fillMaxSize(), color = LockBackground) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color(0xFFE8E5FF),
+                                LockBackground,
+                                Color(0xFFE2F7F2),
+                            )
+                        )
+                    ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 28.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    LockBrandHeader()
+                    LockGlassPanel {
+                        when (state.step) {
+                            LockStep.Loading -> LoadingStep()
+                            LockStep.MnemonicDisplay -> MnemonicDisplayStep(state, viewModel)
+                            LockStep.RestoreFromPhrase -> RestoreFromPhraseStep(state, viewModel)
+                            LockStep.PinSetup -> PinSetupStep(state, viewModel)
+                            LockStep.BiometricOptIn -> BiometricOptInStep(state, viewModel, biometric)
+                            LockStep.VerifyPin -> VerifyPinStep(state, viewModel, biometric)
+                            LockStep.Done -> Spacer(Modifier.height(1.dp))
+                        }
+                    }
+                    Text(
+                        text = "Your face data stays on this device and is encrypted at rest.",
+                        color = LockMuted,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LockBrandHeader() {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(
+                    Brush.linearGradient(listOf(LockPrimary, Color(0xFFB66DFF))),
+                    RoundedCornerShape(14.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("A", color = Color.White, fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.titleLarge)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Attendance AI", color = LockInk, style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold)
+            Text("Private • Offline • Encrypted", color = LockMuted,
+                style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@Composable
+private fun LockGlassPanel(content: @Composable () -> Unit) {
+    Card(
         modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
+            .fillMaxWidth()
+            .border(1.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(28.dp)),
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.88f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun LoadingStep() {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        when (state.step) {
-            LockStep.Loading -> CircularProgressIndicator()
-            LockStep.MnemonicDisplay -> MnemonicDisplayStep(state, viewModel)
-            LockStep.RestoreFromPhrase -> RestoreFromPhraseStep(state, viewModel)
-            LockStep.PinSetup -> PinSetupStep(state, viewModel)
-            LockStep.BiometricOptIn -> BiometricOptInStep(state, viewModel, biometric)
-            LockStep.VerifyPin -> VerifyPinStep(state, viewModel, biometric)
-            LockStep.Done -> {}
-        }
+        CircularProgressIndicator(color = LockPrimary)
+        Text("Preparing your encrypted vault…", color = LockInk)
     }
 }
 
@@ -83,27 +205,52 @@ private fun MnemonicDisplayStep(state: LockUiState, viewModel: LockScreenViewMod
         style = MaterialTheme.typography.bodyMedium,
     )
     state.mnemonic.chunked(3).forEachIndexed { rowIndex, rowWords ->
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             rowWords.forEachIndexed { colIndex, word ->
                 val number = rowIndex * 3 + colIndex + 1
-                Text(
-                    "$number. $word",
+                Surface(
                     modifier = Modifier.weight(1f),
-                    fontWeight = FontWeight.SemiBold,
-                )
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF0EEFF),
+                ) {
+                    Text(
+                        "$number  $word",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                        color = LockInk,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
     }
     StatusTexts(state)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(onClick = viewModel::copyMnemonic, modifier = Modifier.weight(1f)) {
-            Text("Copy")
+        Button(
+            onClick = viewModel::copyMnemonic,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = LockSecondary),
+        ) {
+            Text("Copy", color = Color.White)
         }
-        Button(onClick = viewModel::onMnemonicConfirmed, modifier = Modifier.weight(1f)) {
-            Text("I wrote it down")
+        Button(
+            onClick = viewModel::onMnemonicConfirmed,
+            modifier = Modifier.weight(1f).height(52.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = LockPrimary),
+        ) {
+            Text("I wrote it down", color = Color.White)
         }
     }
-    TextButton(onClick = viewModel::showRestore, modifier = Modifier.fillMaxWidth()) {
+    TextButton(
+        onClick = viewModel::showRestore,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.textButtonColors(contentColor = LockPrimary),
+    ) {
         Text("I already have a recovery phrase")
     }
 }
@@ -275,15 +422,20 @@ private fun VerifyPinStep(
 
 @Composable
 private fun StepTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    Text(
+        text,
+        color = LockInk,
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+    )
 }
 
 @Composable
 private fun StatusTexts(state: LockUiState) {
     state.message?.let {
-        Text(it, style = MaterialTheme.typography.bodySmall)
+        Text(it, color = LockSecondary, style = MaterialTheme.typography.bodySmall)
     }
     state.error?.let {
-        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        Text(it, color = LockError, style = MaterialTheme.typography.bodySmall)
     }
 }

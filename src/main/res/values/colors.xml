@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="attendance_background">#F4F7FC</color>
+    <color name="attendance_status_bar">#E8E5FF</color>
+</resources>
