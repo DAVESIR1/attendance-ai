@@ -91,6 +91,10 @@ class RoomAttendanceStore(private val database: AttendanceDatabase) {
                         isDeleted = false,
                     )
                     if (id == null || old == null) {
+                        if (id != null && old == null) {
+                            // Id collision outside the normal path: replace first.
+                            database.personDao().hardDelete(id)
+                        }
                         database.personDao().insert(entity)
                     } else {
                         database.personDao().update(entity)
