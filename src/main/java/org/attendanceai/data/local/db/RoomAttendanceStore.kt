@@ -177,7 +177,7 @@ class RoomAttendanceStore(private val database: AttendanceDatabase) {
 
     private fun millisForEpochDay(day: Long): Long = day * MILLIS_PER_DAY
 
-    private companion object {
+    internal companion object {
         const val SETTINGS_KEY = "legacy_settings"
         const val MILLIS_PER_DAY = 86_400_000L
     }

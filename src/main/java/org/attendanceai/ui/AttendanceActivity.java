@@ -43,6 +43,7 @@ import org.attendanceai.presentation.lockscreen.LockScreenActivity;
 import org.attendanceai.presentation.lockscreen.SecurityGate;
 import org.attendanceai.BuildConfig;
 import org.attendanceai.data.local.db.AttendanceDatabase;
+import org.attendanceai.data.local.db.LegacyJsonMigrator;
 import org.attendanceai.data.local.db.VaultSession;
 import org.attendanceai.store.AttendanceStore;
 
@@ -123,6 +124,7 @@ public final class AttendanceActivity extends AppCompatActivity {
 
             initializationPhase = "encrypted attendance store";
             buildContent();
+            runLegacyMigrationSafely(database);
             store = new AttendanceStore(getFilesDir(), database);
             initializationPhase = "face recognition pipeline";
             try {
@@ -151,6 +153,36 @@ public final class AttendanceActivity extends AppCompatActivity {
             showInitializationError(
                     "The secure app session could not be started at: " + initializationPhase +
                             "\nDiagnostic: " + failure.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * One-time import of the pre-SQLCipher JSON files (which stored raw face
+     * templates unencrypted) into the encrypted Room database, followed by an
+     * overwrite-and-delete of the source files. Only counts are reported —
+     * never names, templates or timestamps. On failure the JSON files are kept
+     * (no data lost), the condition is surfaced in the on-screen log, and the
+     * encrypted database remains the authoritative store either way.
+     */
+    private void runLegacyMigrationSafely(AttendanceDatabase database) {
+        try {
+            LegacyJsonMigrator.Outcome outcome =
+                    LegacyJsonMigrator.migrateBlocking(getFilesDir(), database);
+            if (outcome.getFailed()) {
+                log("legacy data migration failed (" + outcome.getFailure()
+                        + ") — unencrypted files kept");
+            } else if (outcome.getMigrated()) {
+                log("legacy data migrated to encrypted storage (people: "
+                        + outcome.getPeopleImported() + ", records: "
+                        + outcome.getRecordsImported() + ")");
+                if (!outcome.getFilesDeleted()) {
+                    log("warning: legacy JSON files could not be removed after migration");
+                }
+            }
+        } catch (Throwable migrationFailure) {
+            // Never let a migration problem block the unlock flow.
+            log("legacy data migration skipped ("
+                    + migrationFailure.getClass().getSimpleName() + ")");
         }
     }
 

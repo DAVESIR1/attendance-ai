@@ -157,6 +157,63 @@ class AttendanceDatabaseTest {
         assertEquals(1, database.settingsDao().getAll().size)
     }
 
+    @Test
+    fun legacyJsonMigrationImportsIntoEncryptedDbAndDeletesFiles() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val legacyDir = java.io.File(context.cacheDir, "legacy-migration-fixture").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        try {
+            val legacy = AttendanceStore(legacyDir)
+            val roster = LinkedHashMap<String, AttendanceStore.Person>()
+            val person = AttendanceStore.Person.create(
+                "person-1700000000000", "Migrated Person", floatArrayOf(0.5f, -0.25f),
+            )
+            roster[person.id] = person
+            legacy.saveRoster(roster)
+            legacy.appendRecord(
+                AttendanceStore.Record.create(
+                    person.id, person.name, 0.9f, TimeUnit.DAYS.toMillis(30L),
+                ),
+            )
+            val settings = Settings()
+            settings.similarityThreshold = 0.7f
+            legacy.saveSettings(settings)
+
+            val outcome = LegacyJsonMigrator.migrate(legacyDir, database)
+
+            assertTrue(outcome.failure == null)
+            assertEquals(1, outcome.peopleImported)
+            assertEquals(1, outcome.recordsImported)
+            assertEquals(0, outcome.recordsSkipped)
+            assertTrue(outcome.settingsImported)
+            assertTrue(outcome.filesDeleted)
+            assertTrue(!java.io.File(legacyDir, "roster.json").exists())
+            assertTrue(!java.io.File(legacyDir, "records.json").exists())
+            assertTrue(!java.io.File(legacyDir, "settings.json").exists())
+
+            val saved = database.personDao().getById(1700000000000L)
+            assertNotNull(saved)
+            assertEquals("Migrated Person", saved?.name)
+            assertEquals(person.enrolledAtMs, saved?.consentTimestamp)
+            val dayRecords = database.attendanceDao().getForDate(30L)
+            assertEquals(1, dayRecords.size)
+            assertEquals(AttendanceRecord.PRESENT, dayRecords.single().status)
+
+            // Settings round-trip through the same key the live store reads.
+            val stored = AttendanceStore(legacyDir, database)
+            assertEquals(0.7f, stored.loadSettings().similarityThreshold, 0.0001f)
+
+            // A second run after file deletion must be a clean no-op.
+            val second = LegacyJsonMigrator.migrate(legacyDir, database)
+            assertTrue(second.failure == null)
+            assertTrue(!second.migrated)
+        } finally {
+            legacyDir.deleteRecursively()
+        }
+    }
+
     private fun person(name: String, createdAt: Long): Person = Person(
         name = name,
         faceEmbeddings = EmbeddingCodec.encode(listOf(floatArrayOf(0.1f, 0.2f))),
