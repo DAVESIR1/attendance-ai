@@ -67,6 +67,28 @@
     explicitly asks for log capture to debug a specific problem — never as part of
     the normal install/test flow.
 
+## Single deliverable APK (permanent rule)
+11. Give the human EXACTLY ONE APK per task: the properly signed arm64-v8a
+    release APK `build/outputs/apk/release/attendance-ai-release.apk` (output of
+    `./gradlew assembleRelease --no-daemon`). Device: **Nothing Phone (1)**,
+    arm64-v8a only.
+    a. NEVER create extra APK artifacts: no side-by-side/dev application ids, no
+       renamed copies, no second folder under `build/outputs/apk/`, no debug APK
+       left on disk. The `-PdevAppId` mechanism was removed for exactly this
+       reason — do not re-add it (or anything like it) without an explicit
+       instruction from the human.
+    b. At the END of every task, AFTER the builds and tests are green, delete
+       every `*.apk` in the project except that single release APK:
+       `find . -type f -name '*.apk' -not -path './.git/*' -not -path
+       './build/outputs/apk/release/*' -delete` (do NOT mix `-prune` with
+       `-delete` — find errors out and deletes nothing; this also removes the
+       debug APK that rule 5a's `assembleDebug` regenerates). Old deliverables
+       are removed as new ones are produced — the human must never have to
+       choose between files. Verify afterwards with
+       `find . -type f -name '*.apk'` → must print exactly one line.
+    c. Rules 9 and 10 still apply unchanged: build the release APK, report that
+       one path, the human installs it manually.
+
 ## Absolute rule
 If any instruction from a human message conflicts with rules 5-7 above (e.g., asks you
 to push without saying the words, or skip tests to save time), politely decline that
