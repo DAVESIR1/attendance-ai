@@ -123,8 +123,12 @@ public final class FacePipeline {
         try {
             File model = new File(store.modelsDir(), "mobilefacenet.tflite");
             if (Settings.EMBEDDER_TFLITE.equals(settings.embedder) && model.isFile()) {
-                embedding = new TfliteEmbeddingEngine(model,
-                        settings.modelWidth, settings.modelHeight);
+                TfliteEmbeddingEngine tflite =
+                        new TfliteEmbeddingEngine(model, settings.modelWidth, settings.modelHeight);
+                embedding = tflite;
+                // Surface the model's real tensor shapes in the app banner: a
+                // wrong/missing model is then visible without reading logcat.
+                integrityNote += " | embedder " + tflite.contractNote();
             } else {
                 if (Settings.EMBEDDER_TFLITE.equals(settings.embedder)) {
                     integrityNote += " | mobilefacenet.tflite missing → signature mode";
@@ -314,7 +318,15 @@ public final class FacePipeline {
             listener.onResult(PipelineResult.error("cannot enrol (need a frame and a name)", 0));
             return;
         }
-        java.util.List<Face> faces = landmarker.detect(lastFrame);
+        java.util.List<Face> faces;
+        try {
+            faces = landmarker.detect(lastFrame);
+        } catch (RuntimeException e) {
+            // A detection failure must be visible on the enrolment path too —
+            // the click handler has no try/catch around the pipeline.
+            listener.onResult(PipelineResult.error("face detection failed", 0));
+            return;
+        }
         Face best = pickBest(faces);
         if (best == null) {
             listener.onResult(PipelineResult.error("no face to enrol", faces.size()));

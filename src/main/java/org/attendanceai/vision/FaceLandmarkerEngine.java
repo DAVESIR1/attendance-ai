@@ -6,6 +6,7 @@ package org.attendanceai.vision;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.util.Log;
 
 import com.google.mediapipe.framework.image.BitmapImageBuilder;
 import com.google.mediapipe.framework.image.MPImage;
@@ -30,6 +31,8 @@ import org.attendanceai.camera.CameraFrame;
  */
 public final class FaceLandmarkerEngine implements AutoCloseable {
 
+    private static final String TAG = "FaceLandmarkerEngine";
+
     private final FaceLandmarker landmarker;
     private volatile boolean closed;
 
@@ -46,8 +49,14 @@ public final class FaceLandmarkerEngine implements AutoCloseable {
         Bitmap bitmap = null;
         MPImage mpImage = null;
         try {
+            // Classic 4-argument overload: colours, width, height, config.
+            // The previous 6-argument call (colors, width, height, 0, width,
+            // config) actually maps to createBitmap(colors, offset, width,
+            // height, rowStride?, config) — the literal 0 landed in `height`,
+            // so Bitmap.createBitmap threw "width must be > 0" on every frame
+            // and detection silently produced no faces.
             bitmap = Bitmap.createBitmap(frame.argb(), frame.width, frame.height,
-                    0, frame.width, Bitmap.Config.ARGB_8888);
+                    Bitmap.Config.ARGB_8888);
             mpImage = new BitmapImageBuilder(bitmap).build();
             FaceLandmarkerResult result = landmarker.detect(mpImage);
             if (result == null) {
@@ -62,7 +71,11 @@ public final class FaceLandmarkerEngine implements AutoCloseable {
             }
             return out;
         } catch (RuntimeException e) {
-            return out; // detection failure degrades to "no face"
+            // Surface failures instead of degrading them to a silent "no
+            // face": FacePipeline turns this into a visible "inference error"
+            // (or "face detection failed" during enrolment) plus a logcat entry.
+            Log.e(TAG, "face detection failed", e);
+            throw e;
         } finally {
             if (mpImage != null) {
                 mpImage.close();

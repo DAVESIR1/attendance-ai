@@ -44,4 +44,14 @@ public class CameraFrameTest {
         assertEquals(0x66, rgba[1 * 4 + 2] & 0xFF);
         assertEquals(0xFF, rgba[1 * 4 + 3] & 0xFF);
     }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsZeroSizedFrames() {
+        new CameraFrame(0, 480, new int[0], 0L);
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void rejectsTooSmallBuffers() {
+        new CameraFrame(2, 2, new int[3], 0L);
+    }
 }

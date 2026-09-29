@@ -38,5 +38,15 @@ public interface CameraBackend {
     /** Stops the camera and releases all resources. Safe to call twice. */
     void stop();
 
+    /**
+     * Human-readable reason for the most recent start failure; empty when the
+     * backend has no error to report. Implementations should set this whenever
+     * {@link #start} (or a later asynchronous step) fails so the UI can show
+     * the user what actually went wrong.
+     */
+    default String lastError() {
+        return "";
+    }
+
     boolean isRunning();
 }

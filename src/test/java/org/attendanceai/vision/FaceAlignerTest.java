@@ -65,6 +65,27 @@ public class FaceAlignerTest {
     }
 
     @Test
+    public void alignedTensorIsInterleavedRgb() {
+        // A solid red frame: with interleaved NHWC layout every pixel group
+        // must be (R, G, B) = (255, 0, 0) normalized. A planar layout would
+        // place three identical R values first (caught by out[1] == out[0]).
+        CameraFrame frame = solidFrame(64, 64, 255, 0, 0);
+        Face face = faceWithAnchors(0.25f, 0.35f, 0.75f, 0.35f, 0.5f, 0.75f);
+        float[] out = new float[8 * 8 * 3];
+        assertTrue(FaceAligner.fillAlignedTensor(face, frame, 8, 8, out));
+
+        float red = (255f - 127.5f) / 128f;
+        float off = (0f - 127.5f) / 128f;
+        assertEquals(red, out[0], TOL);
+        assertEquals(off, out[1], TOL);
+        assertEquals(off, out[2], TOL);
+        // Pixel 1 continues the interleaved pattern.
+        assertEquals(red, out[3], TOL);
+        assertEquals(off, out[4], TOL);
+        assertEquals(off, out[5], TOL);
+    }
+
+    @Test
     public void tooSmallFaceIsRejected() {
         CameraFrame frame = solidFrame(640, 480, 255, 255, 255);
         Face tiny = faceWithAnchors(0.49f, 0.49f, 0.51f, 0.49f, 0.5f, 0.5f);

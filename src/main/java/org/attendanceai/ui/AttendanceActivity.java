@@ -13,9 +13,6 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.util.AttributeSet;
-import android.view.Surface;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -25,6 +22,7 @@ import android.widget.TextView;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
 
 import java.io.File;
@@ -34,13 +32,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import org.attendanceai.camera.Camera2Backend;
 import org.attendanceai.camera.CameraBackend;
 import org.attendanceai.camera.CameraFrame;
 
 import org.attendanceai.pipeline.FacePipeline;
 import org.attendanceai.presentation.lockscreen.LockScreenActivity;
 import org.attendanceai.presentation.lockscreen.SecurityGate;
+import org.attendanceai.vision.CameraXSource;
 import org.attendanceai.BuildConfig;
 import org.attendanceai.data.local.db.AttendanceDatabase;
 import org.attendanceai.data.local.db.LegacyJsonMigrator;
@@ -53,9 +51,9 @@ import org.attendanceai.store.AttendanceStore;
  * Layout: a vertically stacked ColumnLayout with
  *   title / integrity-banner / live result / buttons / scrollable log.
  *
- * The camera delivers RGBA frames; the engine executor hands each frame to
- * the pipeline (dropping frames while one is in flight). All pipeline
- * results are marshalled to the UI thread.
+ * The CameraX capture source delivers upright ARGB frames; the engine executor
+ * hands each frame to the pipeline (dropping frames while one is in flight).
+ * All pipeline results are marshalled to the UI thread.
  */
 public final class AttendanceActivity extends AppCompatActivity {
 
@@ -67,8 +65,8 @@ public final class AttendanceActivity extends AppCompatActivity {
     private TextView logView;
     private Button startButton;
     private Button enrollButton;
-    private SurfaceView previewView;
-    private Surface previewSurface;
+    /** CameraX renders the preview into this view; the CameraXSource owns it. */
+    private PreviewView previewView;
     private String lastStatus = "";
     private long lastStatusLogMs;
     private String initializationPhase = "secure session";
@@ -234,27 +232,14 @@ public final class AttendanceActivity extends AppCompatActivity {
         subtitle.setTextColor(0xFF66738D);
         root.addView(subtitle);
 
-        previewView = new SurfaceView(this);
+        // CameraX needs a view it can drive itself: PreviewView handles the
+        // surface, aspect ratio, rotation and scaling, so the app has no
+        // SurfaceHolder bookkeeping left to get wrong.
+        previewView = new PreviewView(this);
         previewView.setBackground(roundBackground(0xFFCBD6E8, 22));
         previewView.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
-        previewView.getHolder().addCallback(new SurfaceHolder.Callback() {
-            @Override
-            public void surfaceCreated(SurfaceHolder holder) {
-                // SurfaceView owns this Surface; Camera2 only borrows it while running.
-                previewSurface = holder.getSurface();
-            }
-
-            @Override
-            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-                // Camera2 scales the preview into the holder surface.
-            }
-
-            @Override
-            public void surfaceDestroyed(SurfaceHolder holder) {
-                previewSurface = null;
-            }
-        });
+        previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
         root.addView(previewView);
 
         banner = cardText(12f, 0xFF66738D);
@@ -383,31 +368,55 @@ public final class AttendanceActivity extends AppCompatActivity {
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
+            resultView.setText("Camera permission needed — allow it, then tap Start camera");
+            requestPermissions(new String[]{Manifest.permission.CAMERA},
+                    PERMISSION_REQUEST_CAMERA);
             log("camera permission not granted");
             return;
         }
-        if (previewSurface == null) {
+        if (previewView == null) {
             resultView.setText("Camera preview is still loading — please try again");
             log("camera preview is not ready");
             return;
         }
-        CameraBackend backend = new Camera2Backend(this);
+        // CameraX backend: PreviewView renders the preview and the ImageAnalysis
+        // use case feeds frames in; both are bound to this activity's lifecycle.
+        CameraXSource source = new CameraXSource(this, previewView);
+        source.setStateListener(new CameraXSource.StateListener() {
+            @Override
+            public void onCameraStarted() {
+                runOnUiThread(() -> log("camera ready (CameraX preview + analysis bound)"));
+            }
+
+            @Override
+            public void onCameraFailed(String reason) {
+                // Asynchronous CameraX failures must be visible on screen —
+                // they are exactly what used to fail silently.
+                runOnUiThread(() -> {
+                    resultView.setText("Camera problem: " + reason);
+                    log("camera failed: " + reason);
+                });
+            }
+        });
         boolean ok;
         try {
-            ok = backend.start(this::submitFrame, 640, 480, previewSurface);
+            ok = source.start(this::submitFrame, 640, 480);
         } catch (RuntimeException e) {
-            log("camera unavailable — using safe fallback");
+            log("camera unavailable: " + e.getClass().getSimpleName());
             ok = false;
         }
         if (!ok) {
-            resultView.setText("Camera could not be opened");
-            log("camera unavailable — no simulated frames started");
+            String reason = source.lastError();
+            resultView.setText(reason.isEmpty()
+                    ? "Camera could not be opened"
+                    : "Camera could not be opened (" + reason + ")");
+            log("camera unavailable: " + (reason.isEmpty() ? "unknown reason" : reason));
             return;
         }
-        camera = backend;
+        camera = source;
         running = true;
         startButton.setText("Stop camera");
-        log("camera started");
+        log("camera starting (CameraX)");
     }
 
     private void submitFrame(CameraFrame frame) {
@@ -518,7 +527,6 @@ public final class AttendanceActivity extends AppCompatActivity {
         if (pipeline != null) {
             pipeline.close();
         }
-        previewSurface = null;
         engine.shutdownNow();
         super.onDestroy();
     }

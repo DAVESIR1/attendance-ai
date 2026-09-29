@@ -90,7 +90,8 @@ public final class FaceAligner {
 
     /**
      * Samples the face region of {@code frame} into a float tensor of shape
-     * {outH, outW, 3} laid out row-major with channel values in [-1, 1]
+     * {outH, outW, 3} laid out row-major with the RGB channels interleaved per
+     * pixel (TFLite NHWC) and channel values in [-1, 1]
      * (pixel = (v − 127.5) / 128). Returns false when the face is untrustable
      * (missing anchors or too small relative to the frame).
      */
@@ -117,7 +118,6 @@ public final class FaceAligner {
 
         float[] transform = similarityTransform(lx, ly, rx, ry, mx, my);
 
-        int channelStride = outWidth * outHeight;
         for (int oy = 0; oy < outHeight; oy++) {
             float ny = oy / (float) (outHeight - 1);
             for (int ox = 0; ox < outWidth; ox++) {
@@ -128,10 +128,13 @@ public final class FaceAligner {
                 float sy = inverseY(transform, nx, ny);
                 float srcX = sx * (frame.width - 1);
                 float srcY = sy * (frame.height - 1);
-                int index = oy * outWidth + ox;
+                // Interleaved RGB per pixel. TFLite input tensors are NHWC
+                // ({batch, height, width, 3}) — the three channels sit next to
+                // each other in memory, not in separate planes.
+                int index = (oy * outWidth + ox) * 3;
                 out[index] = sampleChannel(frame, srcX, srcY, 0);
-                out[index + channelStride] = sampleChannel(frame, srcX, srcY, 1);
-                out[index + channelStride + channelStride] = sampleChannel(frame, srcX, srcY, 2);
+                out[index + 1] = sampleChannel(frame, srcX, srcY, 1);
+                out[index + 2] = sampleChannel(frame, srcX, srcY, 2);
             }
         }
         return true;

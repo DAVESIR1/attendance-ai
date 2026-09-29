@@ -19,6 +19,9 @@ public final class CameraFrame {
     private byte[] rgbaCache;
 
     public CameraFrame(int width, int height, int[] argb, long frameTimeMs) {
+        if (width <= 0 || height <= 0) {
+            throw new IllegalArgumentException("frame size must be positive");
+        }
         if (argb == null || argb.length < width * height) {
             throw new IllegalArgumentException("frame buffer too small");
         }

@@ -16,6 +16,15 @@ public interface EmbeddingEngine {
     /** Embedding dimension. */
     int outputDim();
 
+    /**
+     * One-line description of the loaded model's tensor contract (input → output
+     * shapes), or an empty string when the engine has nothing to report. Shown
+     * on screen so a bad model is visible without logcat.
+     */
+    default String contractNote() {
+        return "";
+    }
+
     /** Embedding of the aligned tensor. Never null; may be zeros on failure. */
     float[] embed(float[] alignedTensor);
 }
