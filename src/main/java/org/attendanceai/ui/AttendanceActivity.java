@@ -59,6 +59,13 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     private static final int PERMISSION_REQUEST_CAMERA = 1001;
 
+    /**
+     * Enrol confirmation holds the live result line for this long — it used to
+     * be overwritten by the very next camera frame (~100 ms later), which is
+     * why enrolment looked like it produced no confirmation.
+     */
+    private static final long ENROL_STICKY_MS = 2500L;
+
     private ColumnLayout root;
     private TextView banner;
     private TextView resultView;
@@ -67,8 +74,12 @@ public final class AttendanceActivity extends AppCompatActivity {
     private Button enrollButton;
     /** CameraX renders the preview into this view; the CameraXSource owns it. */
     private PreviewView previewView;
-    private String lastStatus = "";
-    private long lastStatusLogMs;
+    /** Rate-limits frame statuses to one log line per 1.5 s, deduped by key. */
+    private final EventLogThrottle logThrottle = new EventLogThrottle();
+    /** Bounded scrollback: the log view never grows past its line cap. */
+    private final LogHistory logHistory = new LogHistory();
+    /** While now < this, the live result line is frozen on an enrol message. */
+    private long enrolStickyUntilMs;
     private String initializationPhase = "secure session";
 
     private final ExecutorService engine = Executors.newSingleThreadExecutor();
@@ -316,36 +327,83 @@ public final class AttendanceActivity extends AppCompatActivity {
         return sb.toString();
     }
 
+    /**
+     * Appends one line to the scrolling log (fix 2): bounded to the newest
+     * {@link LogHistory#DEFAULT_MAX_LINES} entries, and every write counts
+     * against the throttle's hard rate limit.
+     */
     private void log(String line) {
-        String current = logView.getText().toString();
-        String updated = (current.length() > 0 ? current + "\n" : "") + line;
-        logView.setText(updated);
+        logThrottle.markLogged(System.currentTimeMillis());
+        logView.setText(logHistory.append(line));
     }
 
+    /** Writes a frame status only when the throttle allows it (fixes 1+2+5). */
+    private void logThrottled(String key, String line) {
+        if (logThrottle.shouldLog(key, System.currentTimeMillis())) {
+            log(line);
+        }
+    }
+
+    /**
+     * Per-frame result display: the live result line keeps updating every
+     * frame; the scrolling log gets only key-changed status lines, at most one
+     * per 1.5 s. One-shot events (punch, enrol) are always logged.
+     */
     private void presentResult(FacePipeline.PipelineResult result) {
+        long now = System.currentTimeMillis();
+        String sim = String.format("%.2f", result.score);
+        String who = result.matchedName.length() > 0
+                ? result.matchedName : result.matchedPersonId;
+
+        // (3) The one outcome that writes to the database: announce it — it
+        // was previously computed (PipelineResult.punched) but never read —
+        // and refresh the banner's record count immediately instead of only
+        // in onResume().
+        if (result.punched) {
+            log("PRESENT: " + who + " (sim " + sim + ") recorded for today");
+            banner.setText(bannerStatus());
+        }
+
+        // (4) Enrol outcomes freeze the live result line for ENROL_STICKY_MS
+        // so the confirmation cannot be overwritten by the next frame, and are
+        // always logged exactly once.
+        if (EventLogThrottle.isEnrolmentStatus(result.status)) {
+            resultView.setTextColor(result.error ? 0xFFC23B5A : 0xFF1D2942);
+            resultView.setText(result.error
+                    ? "! " + result.status
+                    : "✓ " + (result.matchedName.length() > 0
+                            ? result.matchedName + " enrolled" : result.status));
+            log((result.error ? "error: " : "") + result.status);
+            if (!result.error) {
+                banner.setText(bannerStatus()); // roster count changed
+            }
+            enrolStickyUntilMs = now + ENROL_STICKY_MS;
+            return;
+        }
+
+        // Sticky window: hold the enrol message on screen.
+        if (now < enrolStickyUntilMs) {
+            return;
+        }
+
         if (result.error) {
             resultView.setTextColor(0xFFC23B5A);
             resultView.setText("! " + result.status);
-            logStatus("error: " + result.status);
+            logThrottled(EventLogThrottle.errorKey(result.status),
+                    "error: " + result.status);
             return;
         }
         resultView.setTextColor(0xFF1D2942);
         if (result.matchedPersonId.length() > 0) {
-            resultView.setText("✓ " + result.matchedName + "  (sim "
-                    + String.format("%.2f", result.score) + ")  " + result.status);
-            logStatus("match: " + result.matchedName + " @" + String.format("%.2f", result.score));
+            // Live line unchanged (updates every frame with the fresh score);
+            // the log uses a stable per-person key so a continuous sighting is
+            // reported once, and again only after leaving and coming back.
+            resultView.setText("✓ " + who + "  (sim " + sim + ")  " + result.status);
+            logThrottled(EventLogThrottle.matchKey(result.matchedPersonId),
+                    "match: " + who + " @" + sim);
         } else {
             resultView.setText(result.status);
-            logStatus(result.status);
-        }
-    }
-
-    private void logStatus(String status) {
-        long now = System.currentTimeMillis();
-        if (!status.equals(lastStatus) || now - lastStatusLogMs >= 1500L) {
-            lastStatus = status;
-            lastStatusLogMs = now;
-            log(status);
+            logThrottled(EventLogThrottle.statusKey(result.status), result.status);
         }
     }
 
