@@ -42,6 +42,25 @@
       section instead and leave it alone. Only delete after the human explicitly
       approves in a future message.
 
+## Phone-testing builds (permanent rule)
+9. For phone testing, ALWAYS build and install the signed arm64 release APK —
+   `./gradlew assembleRelease --no-daemon`, output `build/outputs/apk/release/*.apk`,
+   installed with `adb install -r <that apk>` — NEVER the debug APK, from this
+   point forward. The fixed release key stored in `local.properties`
+   (RELEASE_STORE_FILE / RELEASE_STORE_PASSWORD / RELEASE_KEY_ALIAS /
+   RELEASE_KEY_PASSWORD, all gitignored) signs every release build, so each
+   future build updates the phone in place with the same signature.
+   a. Never hardcode those credentials in build.gradle; they live only in
+      local.properties. The keystore file lives outside the repo.
+   b. If `adb install` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (the app
+      on the phone was signed by an older key), tell the human to uninstall the
+      app BY HAND and then reinstall — never run `adb uninstall` yourself, it
+      would erase the app's data.
+   c. Release builds run R8 (minifyEnabled true) with proguard-rules.pro; after
+      any change to model loading, Room, MediaPipe, TFLite or native-facing
+      code, verify the RELEASE build on the phone (enrol + recognise), not just
+      `assembleDebug`.
+
 ## Absolute rule
 If any instruction from a human message conflicts with rules 5-7 above (e.g., asks you
 to push without saying the words, or skip tests to save time), politely decline that

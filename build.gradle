@@ -23,6 +23,28 @@ plugins {
 def modelDir = file('models')
 def arm64Only = project.hasProperty('arm64Only')
 
+// --- Release signing credentials ---------------------------------------------
+// Read from local.properties (gitignored) so no password is ever committed in
+// build.gradle. The keystore itself lives OUTSIDE the repo. assembleRelease
+// refuses to run without these entries instead of producing an unsigned APK.
+def releaseProps = new Properties()
+def releasePropsFile = rootProject.file('local.properties')
+if (releasePropsFile.exists()) {
+    releasePropsFile.withInputStream { releaseProps.load(it) }
+}
+def releaseStoreFile = releaseProps.getProperty('RELEASE_STORE_FILE')
+def releaseStorePassword = releaseProps.getProperty('RELEASE_STORE_PASSWORD')
+def releaseKeyAlias = releaseProps.getProperty('RELEASE_KEY_ALIAS')
+def releaseKeyPassword = releaseProps.getProperty('RELEASE_KEY_PASSWORD')
+def releaseSigningReady = releaseStoreFile != null && releaseStorePassword != null &&
+        releaseKeyAlias != null && releaseKeyPassword != null
+if (!releaseSigningReady
+        && gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }) {
+    throw new GradleException('Release build needs RELEASE_STORE_FILE / ' +
+            'RELEASE_STORE_PASSWORD / RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD ' +
+            'in local.properties')
+}
+
 android {
     namespace 'org.attendanceai'
 
@@ -35,6 +57,12 @@ android {
         versionCode 5
         versionName '0.2.0-camerax'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        // Phone-testing builds target this device only: a single arm64-v8a
+        // native slice for both debug and release (smaller APK, and the release
+        // package is exactly what gets installed on the phone).
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
     }
 
     compileOptions {
@@ -42,10 +70,28 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            minifyEnabled false
+            // Real (non-debug) signed release with R8 shrinking/obfuscation.
+            // Keep rules live in proguard-rules.pro (Room, MediaPipe, TFLite,
+            // SQLCipher, Tink must survive minification — verified by running
+            // this build on the phone).
+            minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (releaseSigningReady) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 
@@ -54,8 +100,9 @@ android {
         buildConfig true
     }
 
-    // Optional device-test build: ./gradlew assembleDebug -Parm64Only
-    // produces an APK containing only the arm64-v8a native libraries.
+    // Legacy packaging option: ./gradlew assembleDebug -Parm64Only splits the
+    // APK per ABI. defaultConfig.ndk.abiFilters already limits every build to
+    // arm64-v8a, so this only adds split packaging on top.
     splits {
         abi {
             enable arm64Only
