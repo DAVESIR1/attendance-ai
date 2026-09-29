@@ -52,14 +52,6 @@ android {
 
     defaultConfig {
         applicationId 'org.attendanceai.app'
-        // Optional side-by-side test identity:
-        //   ./gradlew assembleRelease -PdevAppId
-        // builds as org.attendanceai.app.dev, which installs NEXT TO an old
-        // conflicting install of org.attendanceai.app (see PROJECT_STATE.md
-        // "INSTALL BLOCKER"). Without the flag the app id is unchanged.
-        if (project.hasProperty('devAppId')) {
-            applicationIdSuffix '.dev'
-        }
         minSdk 24
         targetSdk 35
         versionCode 6
