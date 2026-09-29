@@ -43,23 +43,29 @@
       approves in a future message.
 
 ## Phone-testing builds (permanent rule)
-9. For phone testing, ALWAYS build and install the signed arm64 release APK —
-   `./gradlew assembleRelease --no-daemon`, output `build/outputs/apk/release/*.apk`,
-   installed with `adb install -r <that apk>` — NEVER the debug APK, from this
-   point forward. The fixed release key stored in `local.properties`
-   (RELEASE_STORE_FILE / RELEASE_STORE_PASSWORD / RELEASE_KEY_ALIAS /
-   RELEASE_KEY_PASSWORD, all gitignored) signs every release build, so each
-   future build updates the phone in place with the same signature.
+9. For phone testing, ALWAYS build the signed arm64 release APK —
+   `./gradlew assembleRelease --no-daemon`, output `build/outputs/apk/release/*.apk` —
+   NEVER the debug APK, from this point forward. Report that exact file path to the
+   human; installing/transferring is the human's job (rule 10). The fixed release
+   key stored in `local.properties` (RELEASE_STORE_FILE / RELEASE_STORE_PASSWORD /
+   RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD, all gitignored) signs every release
+   build, so each future build updates the phone in place with the same signature.
    a. Never hardcode those credentials in build.gradle; they live only in
       local.properties. The keystore file lives outside the repo.
-   b. If `adb install` fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (the app
-      on the phone was signed by an older key), tell the human to uninstall the
-      app BY HAND and then reinstall — never run `adb uninstall` yourself, it
-      would erase the app's data.
+   b. If Android refuses to install the new APK over the existing app because it
+      was signed by an older key, tell the human to uninstall the app BY HAND once
+      and then reinstall — never wipe app data or uninstall on your own.
    c. Release builds run R8 (minifyEnabled true) with proguard-rules.pro; after
       any change to model loading, Room, MediaPipe, TFLite or native-facing
       code, verify the RELEASE build on the phone (enrol + recognise), not just
       `assembleDebug`.
+10. Phone testing method: never use adb install or ask the human to enable USB
+    debugging for installing/testing the app. Always build the signed arm64
+    release APK (`./gradlew assembleRelease`) and report its exact file path under
+    `build/outputs/apk/release/`. The human transfers and installs the file
+    manually. adb/logcat may only be used later, separately, and only if the human
+    explicitly asks for log capture to debug a specific problem — never as part of
+    the normal install/test flow.
 
 ## Absolute rule
 If any instruction from a human message conflicts with rules 5-7 above (e.g., asks you
