@@ -54,8 +54,8 @@ android {
         applicationId 'org.attendanceai.app'
         minSdk 24
         targetSdk 35
-        versionCode 6
-        versionName '0.2.1-event-log'
+        versionCode 7
+        versionName '0.2.2-launcher-icon'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         // Phone-testing builds target this device only: a single arm64-v8a
         // native slice for both debug and release (smaller APK, and the release

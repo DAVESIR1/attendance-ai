@@ -2,4 +2,7 @@
 <resources>
     <color name="attendance_background">#F4F7FC</color>
     <color name="attendance_status_bar">#E8E5FF</color>
+    <!-- Launcher icon: adaptive-icon background (matches the status-bar
+         lavender already used by the app theme). -->
+    <color name="ic_launcher_background">#E8E5FF</color>
 </resources>
