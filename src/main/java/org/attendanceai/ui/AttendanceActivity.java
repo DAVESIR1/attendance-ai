@@ -36,6 +36,7 @@ import org.attendanceai.camera.CameraBackend;
 import org.attendanceai.camera.CameraFrame;
 
 import org.attendanceai.pipeline.FacePipeline;
+import org.attendanceai.pipeline.FailureDiagnosis;
 import org.attendanceai.presentation.lockscreen.LockScreenActivity;
 import org.attendanceai.presentation.lockscreen.SecurityGate;
 import org.attendanceai.vision.CameraXSource;
@@ -81,6 +82,8 @@ public final class AttendanceActivity extends AppCompatActivity {
     /** While now < this, the live result line is frozen on an enrol message. */
     private long enrolStickyUntilMs;
     private String initializationPhase = "secure session";
+    /** Cause of the last pipeline-init failure ("" while the model is healthy). */
+    private String pipelineFailureNote = "";
 
     private final ExecutorService engine = Executors.newSingleThreadExecutor();
     private final AtomicBoolean enqueued = new AtomicBoolean(false);
@@ -136,19 +139,10 @@ public final class AttendanceActivity extends AppCompatActivity {
             runLegacyMigrationSafely(database);
             store = new AttendanceStore(getFilesDir(), database);
             initializationPhase = "face recognition pipeline";
-            try {
-                pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {
-                    runOnUiThread(() -> presentResult(result));
-                });
-                banner.setText(bannerStatus());
-            } catch (Throwable pipelineFailure) {
-                // Keep the secure attendance shell usable even when a native
-                // ML library/model is unavailable on a particular phone.
-                pipeline = null;
-                String modelError = pipelineFailure.getClass().getSimpleName();
-                banner.setText("Encrypted storage ready • face model unavailable (" + modelError + ")");
-                resultView.setText("Camera features need the face model to start");
-                log("face recognition pipeline unavailable: " + modelError);
+            if (!initPipeline()) {
+                // initPipeline already put the detailed cause on the banner and
+                // the result line — exactly ONE log line for the startup failure.
+                log("face model unavailable at startup: " + pipelineFailureNote);
             }
 
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -162,6 +156,65 @@ public final class AttendanceActivity extends AppCompatActivity {
             showInitializationError(
                     "The secure app session could not be started at: " + initializationPhase +
                             "\nDiagnostic: " + failure.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Builds the face-recognition pipeline. Never throws: any failure —
+     * including Errors (UnsatisfiedLinkError, ExceptionInInitializerError,
+     * NoClassDefFoundError) raised by the MediaPipe/TFLite static
+     * initializers when they load their native libraries — leaves
+     * {@link #pipeline} null, records a readable one-line cause in
+     * {@link #pipelineFailureNote} and shows it on the banner.
+     *
+     * Called again from {@link #startCamera()}, so every "Start camera" tap
+     * retries a previously failed model load instead of only repeating the
+     * error. Logging is the caller's job: startup logs unconditionally, the
+     * retry path logs through the throttle so repeated taps cannot stack
+     * identical "camera blocked" lines.
+     */
+    private boolean initPipeline() {
+        try {
+            pipeline = new FacePipeline(this, store.loadSettings(), store, result -> {
+                runOnUiThread(() -> presentResult(result));
+            });
+            pipelineFailureNote = "";
+            refreshBanner();
+            return true;
+        } catch (Throwable failure) {
+            pipeline = null;
+            pipelineFailureNote = FailureDiagnosis.describe(failure);
+            banner.setText("Encrypted storage ready • face model unavailable ("
+                    + pipelineFailureNote + ")");
+            resultView.setTextColor(0xFFC23B5A);
+            resultView.setText("Camera features need the face model to start — cause in the banner");
+            return false;
+        }
+    }
+
+    /**
+     * Refreshes the integrity banner. {@link #bannerStatus()} queries Room, so
+     * a storage hiccup must degrade to a note instead of crashing — and it
+     * must never run through a catch that nulls an already-constructed
+     * pipeline: the old inline try covered BOTH construction and the banner
+     * refresh, so a banner failure silently discarded a healthy pipeline.
+     */
+    private void refreshBanner() {
+        if (banner == null) {
+            // The lock screen runs before buildContent() — nothing to refresh.
+            return;
+        }
+        if (pipeline == null) {
+            banner.setText("Encrypted storage ready • face model unavailable ("
+                    + (pipelineFailureNote.isEmpty() ? "not initialised" : pipelineFailureNote)
+                    + ")");
+            return;
+        }
+        try {
+            banner.setText(bannerStatus());
+        } catch (Throwable failure) {
+            banner.setText("models: " + pipeline.integrityNote()
+                    + " | status unavailable (" + FailureDiagnosis.describe(failure) + ")");
         }
     }
 
@@ -361,7 +414,7 @@ public final class AttendanceActivity extends AppCompatActivity {
         // in onResume().
         if (result.punched) {
             log("PRESENT: " + who + " (sim " + sim + ") recorded for today");
-            banner.setText(bannerStatus());
+            refreshBanner();
         }
 
         // (4) Enrol outcomes freeze the live result line for ENROL_STICKY_MS
@@ -375,7 +428,7 @@ public final class AttendanceActivity extends AppCompatActivity {
                             ? result.matchedName + " enrolled" : result.status));
             log((result.error ? "error: " : "") + result.status);
             if (!result.error) {
-                banner.setText(bannerStatus()); // roster count changed
+                refreshBanner(); // roster count changed
             }
             enrolStickyUntilMs = now + ENROL_STICKY_MS;
             return;
@@ -420,9 +473,19 @@ public final class AttendanceActivity extends AppCompatActivity {
             return;
         }
         if (pipeline == null) {
-            resultView.setText("Face model is unavailable; camera cannot start yet");
-            log("camera blocked because face model is unavailable");
-            return;
+            // Every tap is a retry: if the model failed to load at startup
+            // (native library, model staging, storage), try again before
+            // blocking — a transient failure must not brick the camera.
+            if (!initPipeline()) {
+                resultView.setTextColor(0xFFC23B5A);
+                resultView.setText("! face model unavailable — cause in the banner");
+                // Throttled and keyed by cause: tapping Start repeatedly must
+                // not stack identical "camera blocked" lines (phone report).
+                logThrottled("camera-blocked:" + pipelineFailureNote,
+                        "camera blocked: face model unavailable (" + pipelineFailureNote + ")");
+                return;
+            }
+            resultView.setTextColor(0xFF1D2942);
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
@@ -514,7 +577,8 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     private void enrol() {
         if (pipeline == null) {
-            log("enrollment blocked because face model is unavailable");
+            logThrottled("enrol-blocked:" + pipelineFailureNote,
+                    "enrollment blocked: face model unavailable (" + pipelineFailureNote + ")");
             return;
         }
         if (lastFrame == null) {
@@ -531,7 +595,9 @@ public final class AttendanceActivity extends AppCompatActivity {
 
     private void clearRoster() {
         if (pipeline == null) {
-            log("roster controls are unavailable until the face model loads");
+            logThrottled("roster-blocked:" + pipelineFailureNote,
+                    "roster controls unavailable until the face model loads ("
+                            + pipelineFailureNote + ")");
             return;
         }
         try {
@@ -564,8 +630,8 @@ public final class AttendanceActivity extends AppCompatActivity {
         super.onResume();
         // The activity is resumed once while the lock screen is displayed,
         // before initAfterUnlock() has created the content views.
-        if (banner != null && pipeline != null && store != null) {
-            banner.setText(bannerStatus());
+        if (banner != null && store != null) {
+            refreshBanner();
         }
     }
 

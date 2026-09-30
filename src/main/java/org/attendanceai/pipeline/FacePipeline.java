@@ -108,16 +108,28 @@ public final class FacePipeline {
         try {
             File modelsDir = stageModels(context);
             verifyIntegrity(modelsDir);
-        } catch (IOException e) {
-            integrityNote = "model staging failed: " + e.getMessage();
-            Log.e(TAG, integrityNote);
+        } catch (Throwable failure) {
+            // Throwable, not IOException: a staging failure must degrade the
+            // integrity note, never escape and kill the whole pipeline.
+            integrityNote = "model staging failed: " + FailureDiagnosis.describe(failure);
+            Log.e(TAG, integrityNote, failure);
         }
 
         try {
             landmarker = new FaceLandmarkerEngine(context, "face_landmarker.task");
-        } catch (RuntimeException e) {
-            Log.e(TAG, "face landmarker init failed", e);
-            integrityNote += " | face_landmarker.task unavailable";
+        } catch (Throwable failure) {
+            // Catch Throwable, not just RuntimeException: FaceLandmarker's
+            // static initializer calls System.loadLibrary("mediapipe_tasks_jni"),
+            // so a native-library problem arrives as UnsatisfiedLinkError /
+            // ExceptionInInitializerError / NoClassDefFoundError — all Errors.
+            // Those used to escape this method, blow up the constructor, null
+            // the pipeline and block the camera entirely ("camera blocked
+            // because face model is unavailable"). Now the pipeline is built
+            // anyway (landmarker == null → per-frame "face model unavailable")
+            // and the REAL cause is shown in the app banner.
+            Log.e(TAG, "face landmarker init failed", failure);
+            integrityNote += " | face_landmarker.task load failed: "
+                    + FailureDiagnosis.describe(failure);
         }
 
         try {
@@ -136,14 +148,27 @@ public final class FacePipeline {
                 embedding = null; // signature mode: computed from Face directly
                 signatureMode = true;
             }
-        } catch (IOException e) {
-            Log.e(TAG, "embedding engine init failed", e);
-            integrityNote += " | embedding engine failed → signature mode";
+        } catch (Throwable failure) {
+            // Same reasoning as the landmarker above: TFLite loads its native
+            // library from a static initializer too, and an invalid model can
+            // throw unchecked exceptions the old `catch (IOException)` missed.
+            // Fall back to signature mode instead of losing the pipeline.
+            Log.e(TAG, "embedding engine init failed", failure);
+            integrityNote += " | embedding engine failed ("
+                    + FailureDiagnosis.describe(failure) + ") → signature mode";
             signatureMode = true;
             embedding = null;
         }
 
-        reloadTemplates();
+        try {
+            reloadTemplates();
+        } catch (Throwable failure) {
+            // A roster/template read failure must not block the camera: the
+            // templates simply stay empty and are reloaded on the next call.
+            Log.e(TAG, "template reload failed", failure);
+            integrityNote += " | template reload failed: "
+                    + FailureDiagnosis.describe(failure);
+        }
     }
 
     /** Copies bundled assets into private storage (choice point for integrity). */
