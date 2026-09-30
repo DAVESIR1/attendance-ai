@@ -88,6 +88,10 @@ public final class FacePipeline {
     private volatile boolean busy = false;
     private String integrityNote = "unverified";
     private boolean signatureMode = false;
+    /** Causes of every engine/stage that failed to initialise ("" when all loaded). */
+    private String initFailureNote = "";
+    /** Short landmarker failure text embedded in the per-frame status while it is null. */
+    private String landmarkerStatusNote = "";
 
     // Stability window
     private String streakId = "";
@@ -111,12 +115,17 @@ public final class FacePipeline {
         } catch (Throwable failure) {
             // Throwable, not IOException: a staging failure must degrade the
             // integrity note, never escape and kill the whole pipeline.
-            integrityNote = "model staging failed: " + FailureDiagnosis.describe(failure);
+            String note = FailureDiagnosis.describe(failure);
+            integrityNote = "model staging failed: " + note;
+            initFailureNote += (initFailureNote.isEmpty() ? "" : " | ") + "model staging: " + note;
             Log.e(TAG, integrityNote, failure);
         }
 
         try {
-            landmarker = new FaceLandmarkerEngine(context, "face_landmarker.task");
+            // The staged file is the fallback model source (see FaceLandmarkerEngine):
+            // asset path first, then a direct buffer of this file, then the file.
+            landmarker = new FaceLandmarkerEngine(context, "face_landmarker.task",
+                    new File(store.modelsDir(), "face_landmarker.task"));
         } catch (Throwable failure) {
             // Catch Throwable, not just RuntimeException: FaceLandmarker's
             // static initializer calls System.loadLibrary("mediapipe_tasks_jni"),
@@ -126,10 +135,13 @@ public final class FacePipeline {
             // the pipeline and block the camera entirely ("camera blocked
             // because face model is unavailable"). Now the pipeline is built
             // anyway (landmarker == null → per-frame "face model unavailable")
-            // and the REAL cause is shown in the app banner.
+            // and the REAL cause is shown in the banner AND the event log.
             Log.e(TAG, "face landmarker init failed", failure);
-            integrityNote += " | face_landmarker.task load failed: "
-                    + FailureDiagnosis.describe(failure);
+            String note = FailureDiagnosis.describe(failure);
+            integrityNote += " | face_landmarker.task load failed: " + note;
+            initFailureNote += (initFailureNote.isEmpty() ? "" : " | ")
+                    + "face landmarker: " + note;
+            landmarkerStatusNote = FailureDiagnosis.describe(failure, 120);
         }
 
         try {
@@ -154,8 +166,10 @@ public final class FacePipeline {
             // throw unchecked exceptions the old `catch (IOException)` missed.
             // Fall back to signature mode instead of losing the pipeline.
             Log.e(TAG, "embedding engine init failed", failure);
-            integrityNote += " | embedding engine failed ("
-                    + FailureDiagnosis.describe(failure) + ") → signature mode";
+            String note = FailureDiagnosis.describe(failure);
+            integrityNote += " | embedding engine failed (" + note + ") → signature mode";
+            initFailureNote += (initFailureNote.isEmpty() ? "" : " | ")
+                    + "embedding engine: " + note;
             signatureMode = true;
             embedding = null;
         }
@@ -166,8 +180,10 @@ public final class FacePipeline {
             // A roster/template read failure must not block the camera: the
             // templates simply stay empty and are reloaded on the next call.
             Log.e(TAG, "template reload failed", failure);
-            integrityNote += " | template reload failed: "
-                    + FailureDiagnosis.describe(failure);
+            String note = FailureDiagnosis.describe(failure);
+            integrityNote += " | template reload failed: " + note;
+            initFailureNote += (initFailureNote.isEmpty() ? "" : " | ")
+                    + "template reload: " + note;
         }
     }
 
@@ -238,6 +254,15 @@ public final class FacePipeline {
         return integrityNote;
     }
 
+    /**
+     * Non-empty when at least one init stage failed (model staging, landmarker,
+     * embedder, template reload). Shown once in the on-screen log at startup so
+     * the exact cause travels with a screenshot of the log, not only the banner.
+     */
+    public String initFailureNote() {
+        return initFailureNote;
+    }
+
     public boolean inSignatureMode() {
         return signatureMode;
     }
@@ -263,7 +288,14 @@ public final class FacePipeline {
 
     private void runOnce(CameraFrame original) {
         if (landmarker == null) {
-            listener.onResult(PipelineResult.error("face model unavailable", 0));
+            // Carry the real cause in the status itself: it is the line the
+            // user sees ticking every frame AND (deduped by key) the line the
+            // event log keeps, so a screenshot names the failure.
+            listener.onResult(PipelineResult.error(
+                    landmarkerStatusNote.isEmpty()
+                            ? "face model unavailable"
+                            : "face model unavailable — " + landmarkerStatusNote,
+                    0));
             return;
         }
         // The pipeline consumes the frame synchronously.
@@ -339,8 +371,23 @@ public final class FacePipeline {
 
     /** Enrols the best face in the last delivered frame under {@code name}. */
     public void enrollBestFace(CameraFrame lastFrame, String name) {
-        if (lastFrame == null || landmarker == null || name == null || name.length() == 0) {
-            listener.onResult(PipelineResult.error("cannot enrol (need a frame and a name)", 0));
+        // Each guard gets its own message: "need a frame and a name" for a
+        // missing face model sent the phone report down the wrong path.
+        if (landmarker == null) {
+            listener.onResult(PipelineResult.error(
+                    landmarkerStatusNote.isEmpty()
+                            ? "cannot enrol: face model unavailable"
+                            : "cannot enrol: face model unavailable — " + landmarkerStatusNote,
+                    0));
+            return;
+        }
+        if (lastFrame == null) {
+            listener.onResult(PipelineResult.error(
+                    "cannot enrol: no frame yet (start the camera first)", 0));
+            return;
+        }
+        if (name == null || name.length() == 0) {
+            listener.onResult(PipelineResult.error("cannot enrol: no name given", 0));
             return;
         }
         java.util.List<Face> faces;

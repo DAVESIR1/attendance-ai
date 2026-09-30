@@ -14,6 +14,11 @@ import com.google.mediapipe.tasks.vision.core.RunningMode;
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker;
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,10 +39,112 @@ public final class FaceLandmarkerEngine implements AutoCloseable {
     private static final String TAG = "FaceLandmarkerEngine";
 
     private final FaceLandmarker landmarker;
+    /**
+     * Buffer of the staged model when the landmarker had to be created from
+     * memory ({@code createFromBuffer}). Kept referenced so the JVM cannot
+     * collect it while MediaPipe's native side still points at it.
+     */
+    private final ByteBuffer modelBuffer;
     private volatile boolean closed;
 
+    /** Asset-only form (kept for paths that have no staged model file). */
     public FaceLandmarkerEngine(Context context, String assetPath) {
-        this.landmarker = FaceLandmarker.createFromFile(context, assetPath);
+        this(context, assetPath, null);
+    }
+
+    /**
+     * Creates the landmarker, trying progressively more direct model sources:
+     * asset path → direct {@link ByteBuffer} of the staged file → staged
+     * {@link File}. MediaPipe can fail to create the task on a particular
+     * device/ROM (asset-manager bridge, asset cache copy, native graph init)
+     * in ways the app cannot influence from Java — but the same native code
+     * accepts the model by different routes, so a fixed file in private
+     * storage is tried before giving up.
+     *
+     * The FIRST failure is rethrown (later attempts attached as suppressed
+     * exceptions) so the on-screen diagnosis still names the original cause.
+     */
+    public FaceLandmarkerEngine(Context context, String assetPath, File stagedModel) {
+        Throwable firstFailure = null;
+        FaceLandmarker created = null;
+        ByteBuffer buffer = null;
+
+        try {
+            created = FaceLandmarker.createFromFile(context, assetPath);
+        } catch (Throwable failure) {
+            firstFailure = failure;
+            Log.e(TAG, "landmarker creation from asset failed", failure);
+        }
+
+        if (created == null && stagedModel != null && stagedModel.isFile()) {
+            try {
+                buffer = readDirect(stagedModel);
+                created = FaceLandmarker.createFromBuffer(context, buffer);
+            } catch (Throwable failure) {
+                Log.e(TAG, "landmarker creation from staged buffer failed", failure);
+                attach(firstFailure, failure);
+                buffer = null; // never keep memory for a failed attempt
+            }
+        }
+
+        if (created == null && stagedModel != null && stagedModel.isFile()) {
+            try {
+                created = FaceLandmarker.createFromFile(context, stagedModel);
+            } catch (Throwable failure) {
+                Log.e(TAG, "landmarker creation from staged file failed", failure);
+                attach(firstFailure, failure);
+            }
+        }
+
+        if (created == null) {
+            throw rethrow(firstFailure);
+        }
+        this.landmarker = created;
+        this.modelBuffer = buffer;
+    }
+
+    /** Reads the model file into the direct buffer createFromBuffer expects. */
+    private static ByteBuffer readDirect(File file) throws IOException {
+        long length = file.length();
+        if (length <= 0L || length > Integer.MAX_VALUE) {
+            throw new IOException("unusable model file size: " + length);
+        }
+        byte[] bytes = new byte[(int) length];
+        try (InputStream in = new FileInputStream(file)) {
+            int offset = 0;
+            while (offset < bytes.length) {
+                int read = in.read(bytes, offset, bytes.length - offset);
+                if (read < 0) {
+                    throw new IOException("short read at " + offset + "/" + bytes.length);
+                }
+                offset += read;
+            }
+        }
+        ByteBuffer buffer = ByteBuffer.allocateDirect(bytes.length);
+        buffer.put(bytes);
+        buffer.rewind();
+        return buffer;
+    }
+
+    /** Records a later attempt's failure on the first one (never drops it). */
+    private static void attach(Throwable primary, Throwable later) {
+        if (primary != null && primary != later) {
+            primary.addSuppressed(later);
+        }
+    }
+
+    /** Re-throws the first failure unchanged when possible (keeps its class). */
+    private static RuntimeException rethrow(Throwable failure) {
+        if (failure == null) {
+            return new IllegalStateException("face landmarker could not be created");
+        }
+        if (failure instanceof RuntimeException) {
+            return (RuntimeException) failure;
+        }
+        if (failure instanceof Error) {
+            throw (Error) failure;
+        }
+        return new IllegalStateException("face landmarker could not be created", failure);
     }
 
     /** Detects faces in an ARGB frame. Empty list when none found. */

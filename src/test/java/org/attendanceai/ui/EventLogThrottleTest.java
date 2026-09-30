@@ -141,6 +141,15 @@ public class EventLogThrottleTest {
         assertTrue(EventLogThrottle.isEnrolmentStatus("enrolled Person 1"));
         assertTrue(EventLogThrottle.isEnrolmentStatus(
                 "cannot enrol (need a frame and a name)"));
+        // The per-guard messages added after the phone report: a missing face
+        // model, a missing frame and a missing name each get their own text.
+        assertTrue(EventLogThrottle.isEnrolmentStatus(
+                "cannot enrol: face model unavailable"));
+        assertTrue(EventLogThrottle.isEnrolmentStatus(
+                "cannot enrol: face model unavailable — UnsatisfiedLinkError: dlopen failed"));
+        assertTrue(EventLogThrottle.isEnrolmentStatus(
+                "cannot enrol: no frame yet (start the camera first)"));
+        assertTrue(EventLogThrottle.isEnrolmentStatus("cannot enrol: no name given"));
         assertTrue(EventLogThrottle.isEnrolmentStatus("no face to enrol"));
         assertTrue(EventLogThrottle.isEnrolmentStatus("face detection failed"));
         assertTrue(EventLogThrottle.isEnrolmentStatus(

@@ -143,6 +143,10 @@ public final class AttendanceActivity extends AppCompatActivity {
                 // initPipeline already put the detailed cause on the banner and
                 // the result line — exactly ONE log line for the startup failure.
                 log("face model unavailable at startup: " + pipelineFailureNote);
+            } else if (!pipeline.initFailureNote().isEmpty()) {
+                // The shell is alive but an engine failed to load: one line with
+                // the exact cause, so the log itself is diagnosable.
+                log("face model problem: " + pipeline.initFailureNote());
             }
 
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
