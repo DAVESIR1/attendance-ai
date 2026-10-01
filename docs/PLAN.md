@@ -61,6 +61,29 @@
    `models/checksums.sha256` (recorded by `scripts/fetch_models.sh`) before the
    pipeline will initialise.
 
+## Build & signing (release)
+
+Release builds are signed with the fixed key whose credentials live only in the
+gitignored `local.properties` (`RELEASE_STORE_FILE` / `RELEASE_STORE_PASSWORD` /
+`RELEASE_KEY_ALIAS` / `RELEASE_KEY_PASSWORD`; keystore kept outside the repo) and
+contain the single `arm64-v8a` slice (`ndk.abiFilters`), targeting the Nothing
+Phone (1) test device.
+
+**Minification is OFF for release** (`minifyEnabled false`, `shrinkResources false`):
+"Release builds do not use R8 minification, because this is an open-source project
+with no code-secrecy requirement, and because MediaPipe's internal Flogger-based
+logging breaks under R8 renaming (google-ai-edge/mediapipe#4806, unresolved
+upstream). Do not re-enable minifyEnabled for release without first confirming
+MediaPipe has published an official fix."
+
+Background: the on-device failure
+`ExceptionInInitializerError ← IllegalStateException: "no caller found on the stack for: F2.d"`
+(shown to the user as "face model unavailable") was caused by R8 renaming
+MediaPipe's internal classes — Flogger's stack-based caller lookup then cannot
+resolve the caller class while `FaceLandmarker`'s static initializer runs.
+`proguard-rules.pro` is kept in the repo for reference but is intentionally not
+applied; the decision is also documented in `build.gradle`.
+
 ## Known limitations / follow-ups
 
 * `mobilefacenet.tflite` is a third-party conversion (license = "verify your

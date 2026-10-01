@@ -54,8 +54,8 @@ android {
         applicationId 'org.attendanceai.app'
         minSdk 24
         targetSdk 35
-        versionCode 9
-        versionName '0.2.4-landmarker-fallback'
+        versionCode 10
+        versionName '0.2.5-no-minify'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         // Phone-testing builds target this device only: a single arm64-v8a
         // native slice for both debug and release (smaller APK, and the release
@@ -83,12 +83,32 @@ android {
 
     buildTypes {
         release {
-            // Real (non-debug) signed release with R8 shrinking/obfuscation.
-            // Keep rules live in proguard-rules.pro (Room, MediaPipe, TFLite,
-            // SQLCipher, Tink must survive minification — verified by running
-            // this build on the phone).
-            minifyEnabled true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // NO R8 minification/obfuscation — deliberate, permanent for now.
+            //
+            // Root cause of the on-device "face model unavailable" failure:
+            // MediaPipe Tasks crashes during static initialization under R8.
+            // Its bundled Flogger logging resolves the caller class from the
+            // stack by name; R8 renaming (com.google.mediapipe… → e.g. "F2.d")
+            // breaks that lookup and throws
+            //   ExceptionInInitializerError ← IllegalStateException:
+            //   "no caller found on the stack for: F2.d"
+            // Upstream issue google-ai-edge/mediapipe#4806 ("Crash when minify
+            // is true") is still unresolved and upstream has published no
+            // reliable keep-rule set. Disabling minification removes the root
+            // cause instead of chasing keep rules.
+            //
+            // This is a FOSS project with public source on GitHub, so code
+            // obfuscation provides no benefit anyway.
+            //
+            // Do NOT re-enable minifyEnabled for release without first
+            // confirming MediaPipe has published an official fix.
+            //
+            // proguard-rules.pro is intentionally NOT applied; it stays in the
+            // repo (harmless, unused) as reference in case minification ever
+            // becomes safe again.
+            minifyEnabled false
+            // Resource shrinking depends on code shrinking — keep it off too.
+            shrinkResources false
             if (releaseSigningReady) {
                 signingConfig signingConfigs.release
             }
