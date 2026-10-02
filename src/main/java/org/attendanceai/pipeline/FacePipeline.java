@@ -17,15 +17,21 @@ import java.util.List;
 import java.util.Map;
 
 import org.attendanceai.camera.CameraFrame;
+import org.attendanceai.enrol.EnrolmentDetails;
+import org.attendanceai.enrol.EnrolmentWarnings;
 import org.attendanceai.model.ModelIntegrity;
 import org.attendanceai.store.AttendanceStore;
 import org.attendanceai.store.Settings;
+import org.attendanceai.vision.CaptureStep;
 import org.attendanceai.vision.EmbeddingEngine;
 import org.attendanceai.vision.Face;
 import org.attendanceai.vision.FaceAligner;
 import org.attendanceai.vision.FaceLandmarkerEngine;
 import org.attendanceai.vision.FaceMatcher;
+import org.attendanceai.vision.GuidedCaptureController;
 import org.attendanceai.vision.LandmarkSignatureEngine;
+import org.attendanceai.vision.PoseMetrics;
+import org.attendanceai.vision.PoseSample;
 import org.attendanceai.vision.TfliteEmbeddingEngine;
 
 /**
@@ -54,9 +60,12 @@ public final class FacePipeline {
         public final String status;      // informational text for the UI
         public final boolean error;
         public final boolean punched;    // a fresh attendance record was written
+        /** Guided-enrolment progress, or null for an ordinary recognition frame. */
+        public final GuidedStatus guided;
 
         private PipelineResult(String personId, String name, float score,
-                int faces, String status, boolean error, boolean punched) {
+                int faces, String status, boolean error, boolean punched,
+                GuidedStatus guided) {
             this.matchedPersonId = personId;
             this.matchedName = name;
             this.score = score;
@@ -64,14 +73,67 @@ public final class FacePipeline {
             this.status = status;
             this.error = error;
             this.punched = punched;
+            this.guided = guided;
         }
 
         public static PipelineResult none(String status, int faces) {
-            return new PipelineResult("", "", 0f, faces, status, false, false);
+            return new PipelineResult("", "", 0f, faces, status, false, false, null);
         }
 
         public static PipelineResult error(String status, int faces) {
-            return new PipelineResult("", "", 0f, faces, status, true, false);
+            return new PipelineResult("", "", 0f, faces, status, true, false, null);
+        }
+
+        static PipelineResult guided(GuidedStatus guided, int faces) {
+            return new PipelineResult("", "", 0f, faces, guided.statusText(), false, false, guided);
+        }
+    }
+
+    /**
+     * One guided-enrolment frame: which pose is being captured, what to tell the
+     * user, and how many poses are stored so far. Reaches the UI through
+     * {@link PipelineResult#guided} so the existing single listener (and its
+     * UI-thread marshalling) stays the only callback path.
+     */
+    public static final class GuidedStatus {
+        public final String name;
+        public final CaptureStep step;        // null once every step is captured
+        public final String instruction;      // "" once complete
+        public final String progress;         // "Step 2 of 5"
+        public final boolean noFaceHint;
+        public final boolean multiFaceWarning;
+        public final boolean waitingForEyeOpen;
+        public final boolean complete;
+        public final int capturedCount;       // steps captured by the state machine
+        public final int embeddingCount;      // embeddings actually stored
+        public final int stepCount;
+        public final EnrolmentWarnings.SimilarFace similarFace; // null until complete
+
+        GuidedStatus(String name, CaptureStep step, String instruction, String progress,
+                boolean noFaceHint, boolean multiFaceWarning, boolean waitingForEyeOpen,
+                boolean complete, int capturedCount, int embeddingCount,
+                EnrolmentWarnings.SimilarFace similarFace) {
+            this.name = name;
+            this.step = step;
+            this.instruction = instruction;
+            this.progress = progress;
+            this.noFaceHint = noFaceHint;
+            this.multiFaceWarning = multiFaceWarning;
+            this.waitingForEyeOpen = waitingForEyeOpen;
+            this.complete = complete;
+            this.capturedCount = capturedCount;
+            this.embeddingCount = embeddingCount;
+            this.stepCount = CaptureStep.count();
+            this.similarFace = similarFace;
+        }
+
+        /** One-line human summary used for the log and the result label. */
+        public String statusText() {
+            if (complete) {
+                return "captured " + capturedCount + "/" + stepCount
+                        + " poses (" + embeddingCount + " embeddings)";
+            }
+            return instruction + " — " + progress;
         }
     }
 
@@ -82,7 +144,8 @@ public final class FacePipeline {
 
     private FaceLandmarkerEngine landmarker;
     private EmbeddingEngine embedding;
-    private Map<String, float[]> templates = new LinkedHashMap<String, float[]>();
+    /** personId → every embedding stored for that person (guided multi-angle). */
+    private Map<String, List<float[]>> templates = new LinkedHashMap<String, List<float[]>>();
     private final float[] alignedTensor;
 
     private volatile boolean busy = false;
@@ -97,6 +160,17 @@ public final class FacePipeline {
     private String streakId = "";
     private int streakCount = 0;
     private float streakScore = 0f;
+
+    // ---- guided multi-angle enrolment -------------------------------------
+    /** Non-null exactly while a guided enrolment session is in progress. */
+    private GuidedCaptureController guided;
+    private String guidedName = "";
+    /** One embedding per captured pose (up to CaptureStep.count()). */
+    private final List<float[]> guidedEmbeddings = new ArrayList<float[]>();
+    /** Warning shown before saving when the new face resembles an existing one. */
+    private EnrolmentWarnings.SimilarFace guidedSimilar;
+    /** Poses whose embedding could not be computed (reported, never silently lost). */
+    private int guidedEmbeddingFailures;
 
     public FacePipeline(Context context, Settings settings, AttendanceStore store,
             Listener listener) {
@@ -239,12 +313,17 @@ public final class FacePipeline {
         }
     }
 
-    /** Reloads the person templates from the persisted roster. */
+    /**
+     * Reloads every person's stored embeddings from the persisted roster. The
+     * matcher compares the live face against ALL of them, so a person enrolled
+     * from five angles is recognised from any of them.
+     */
     public void reloadTemplates() {
-        Map<String, float[]> fresh = new LinkedHashMap<String, float[]>();
+        Map<String, List<float[]>> fresh = new LinkedHashMap<String, List<float[]>>();
         for (AttendanceStore.Person person : store.loadRoster().values()) {
-            if (person.template != null && person.template.length > 0) {
-                fresh.put(person.id, person.template);
+            List<float[]> embeddings = person.allTemplates();
+            if (!embeddings.isEmpty()) {
+                fresh.put(person.id, embeddings);
             }
         }
         templates = fresh;
@@ -300,6 +379,12 @@ public final class FacePipeline {
         }
         // The pipeline consumes the frame synchronously.
         java.util.List<Face> faces = landmarker.detect(original);
+        if (guided != null) {
+            // Guided enrolment owns the frame: no matching and no punches while
+            // a person is being enrolled.
+            runGuidedStep(original, faces);
+            return;
+        }
         if (faces.isEmpty()) {
             resetStreak();
             listener.onResult(PipelineResult.none("no face", 0));
@@ -350,7 +435,7 @@ public final class FacePipeline {
         }
         listener.onResult(new PipelineResult(match.personId,
                 personName(match.personId), streakScore, faces.size(),
-                match.personId + " seen (#" + streakCount + ")", false, punched));
+                match.personId + " seen (#" + streakCount + ")", false, punched, null));
     }
 
     private String personName(String id) {
@@ -369,62 +454,170 @@ public final class FacePipeline {
         return new float[0];
     }
 
-    /** Enrols the best face in the last delivered frame under {@code name}. */
-    public void enrollBestFace(CameraFrame lastFrame, String name) {
-        // Each guard gets its own message: "need a frame and a name" for a
-        // missing face model sent the phone report down the wrong path.
+    // ---------------------------------------- guided multi-angle enrolment
+
+    /** True while a guided enrolment session is running (and not yet saved). */
+    public boolean guidedActive() {
+        return guided != null;
+    }
+
+    /** True once every pose of the running session has been captured. */
+    public boolean guidedComplete() {
+        return guided != null && guided.isComplete();
+    }
+
+    /** Poses captured so far in the running session. */
+    public int guidedCaptureCount() {
+        return guided == null ? 0 : guided.capturedCount();
+    }
+
+    /** Embeddings stored so far in the running session. */
+    public int guidedEmbeddingCount() {
+        return guidedEmbeddings.size();
+    }
+
+    /** The existing person the captured embeddings resemble, or null. */
+    public EnrolmentWarnings.SimilarFace guidedSimilarFace() {
+        return guidedSimilar;
+    }
+
+    /** Every enrolled person's name, for the duplicate-name gate. */
+    public java.util.List<String> rosterNames() {
+        java.util.List<String> names = new ArrayList<String>();
+        for (AttendanceStore.Person person : store.loadRoster().values()) {
+            names.add(person.name);
+        }
+        return names;
+    }
+
+    /**
+     * Starts the guided capture for {@code name}. Returns an empty string on
+     * success, or a user-facing reason when the flow cannot start. The camera
+     * must already be running — frames drive the whole state machine.
+     */
+    public String beginGuidedCapture(String name) {
         if (landmarker == null) {
-            listener.onResult(PipelineResult.error(
-                    landmarkerStatusNote.isEmpty()
-                            ? "cannot enrol: face model unavailable"
-                            : "cannot enrol: face model unavailable — " + landmarkerStatusNote,
-                    0));
+            return "cannot enrol: face model unavailable";
+        }
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            return "cannot enrol: no name given";
+        }
+        guided = new GuidedCaptureController();
+        guidedName = trimmed;
+        guidedEmbeddings.clear();
+        guidedSimilar = null;
+        guidedEmbeddingFailures = 0;
+        return "";
+    }
+
+    /** Abandons the running session without saving anything. */
+    public void cancelGuidedCapture() {
+        guided = null;
+        guidedName = "";
+        guidedEmbeddings.clear();
+        guidedSimilar = null;
+        guidedEmbeddingFailures = 0;
+    }
+
+    /**
+     * Feeds one frame through the guided state machine: picks the largest face
+     * when several are present, samples its pose, and on a capture stores ONE
+     * embedding for that pose (up to {@link CaptureStep#count()} total).
+     */
+    private void runGuidedStep(CameraFrame frame, java.util.List<Face> faces) {
+        if (guided.isComplete()) {
+            // The final status was delivered on the completing frame; the flow
+            // now waits for the details dialogs, so keep ignoring camera frames.
             return;
         }
-        if (lastFrame == null) {
-            listener.onResult(PipelineResult.error(
-                    "cannot enrol: no frame yet (start the camera first)", 0));
+        Face largest = PoseMetrics.largestFace(faces);
+        PoseSample sample = largest == null
+                ? PoseSample.none() : PoseMetrics.sample(largest, faces.size());
+        GuidedCaptureController.Update update =
+                guided.onFrame(sample, System.currentTimeMillis());
+        if (update.captured && largest != null) {
+            float[] vector = currentVector(largest, frame);
+            if (vector.length > 0) {
+                guidedEmbeddings.add(vector);
+            } else {
+                guidedEmbeddingFailures++;
+            }
+        }
+        if (update.complete && guidedSimilar == null) {
+            guidedSimilar = findSimilarFace(guidedEmbeddings);
+        }
+        listener.onResult(PipelineResult.guided(guidedStatus(update), faces.size()));
+    }
+
+    private GuidedStatus guidedStatus(GuidedCaptureController.Update update) {
+        return new GuidedStatus(guidedName, update.step, update.instruction,
+                update.progress, update.noFaceHint, update.multiFaceWarning,
+                update.waitingForEyeOpen, update.complete, guided.capturedCount(),
+                guidedEmbeddings.size(), update.complete ? guidedSimilar : null);
+    }
+
+    /**
+     * Best resemblance between the freshly captured embeddings and any existing
+     * person's stored embeddings, above the spec's 0.85 warning threshold.
+     */
+    private EnrolmentWarnings.SimilarFace findSimilarFace(List<float[]> captured) {
+        java.util.List<EnrolmentWarnings.KnownPerson> known =
+                new ArrayList<EnrolmentWarnings.KnownPerson>();
+        for (Map.Entry<String, List<float[]>> entry : templates.entrySet()) {
+            known.add(new EnrolmentWarnings.SimpleKnownPerson(
+                    entry.getKey(), personName(entry.getKey()), entry.getValue()));
+        }
+        return EnrolmentWarnings.findSimilarFace(captured, known,
+                EnrolmentWarnings.SIMILARITY_WARNING_THRESHOLD);
+    }
+
+    /**
+     * Saves the captured person: every captured embedding plus whatever optional
+     * details were filled in (all nullable). Reports the outcome through the
+     * normal listener, so the existing sticky enrolment confirmation and the
+     * roster-count refresh apply unchanged.
+     */
+    public void completeGuidedCapture(EnrolmentDetails details) {
+        if (guided == null || !guided.isComplete()) {
+            listener.onResult(PipelineResult.error("cannot enrol: capture incomplete", 0));
             return;
         }
-        if (name == null || name.length() == 0) {
-            listener.onResult(PipelineResult.error("cannot enrol: no name given", 0));
+        if (guidedEmbeddings.isEmpty()) {
+            listener.onResult(PipelineResult.error("cannot enrol: no embeddings captured", 0));
+            cancelGuidedCapture();
             return;
         }
-        java.util.List<Face> faces;
-        try {
-            faces = landmarker.detect(lastFrame);
-        } catch (RuntimeException e) {
-            // A detection failure must be visible on the enrolment path too —
-            // the click handler has no try/catch around the pipeline.
-            listener.onResult(PipelineResult.error("face detection failed", 0));
-            return;
-        }
-        Face best = pickBest(faces);
-        if (best == null) {
-            listener.onResult(PipelineResult.error("no face to enrol", faces.size()));
-            return;
-        }
-        float[] vector = currentVector(best, lastFrame);
-        if (vector.length == 0) {
-            listener.onResult(PipelineResult.error("embedding failed during enrolment",
-                    faces.size()));
-            return;
-        }
-        java.util.Map<String, AttendanceStore.Person> roster =
+        Map<String, AttendanceStore.Person> roster =
                 new LinkedHashMap<String, AttendanceStore.Person>(store.loadRoster());
         String id = "person-" + System.currentTimeMillis();
         AttendanceStore.Person person =
-                AttendanceStore.Person.create(id, name, vector);
+                AttendanceStore.Person.createMulti(id, guidedName, guidedEmbeddings);
+        EnrolmentDetails filled = details == null ? EnrolmentDetails.empty() : details;
+        person.identityNumber = filled.identityNumber;
+        person.dob = filled.dobMillis;
+        person.bloodGroup = filled.bloodGroup;
+        person.mobile = filled.mobile;
         roster.put(id, person);
         try {
             store.saveRoster(roster);
             reloadTemplates();
         } catch (IOException e) {
             listener.onResult(PipelineResult.error("roster save failed: " + e.getMessage(), 1));
+            // Leave the guided mode behind: a session that stays "complete" but
+            // unsaved would keep matching switched off for every later frame.
+            cancelGuidedCapture();
             return;
         }
-        listener.onResult(new PipelineResult(id, name, 1f, faces.size(),
-                "enrolled " + name, false, false));
+        String name = guidedName;
+        int stored = guidedEmbeddings.size();
+        int failed = guidedEmbeddingFailures;
+        cancelGuidedCapture();
+        String note = failed == 0 ? ""
+                : " (" + failed + (failed == 1 ? " pose" : " poses") + " not embedded)";
+        listener.onResult(new PipelineResult(id, name, 1f, 1,
+                "enrolled " + name + " — " + stored + " embeddings" + note,
+                false, false, null));
     }
 
     private static Face pickBest(java.util.List<Face> faces) {

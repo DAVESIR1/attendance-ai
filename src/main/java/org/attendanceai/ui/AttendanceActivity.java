@@ -5,6 +5,8 @@
 package org.attendanceai.ui;
 
 import android.Manifest;
+import android.app.AlertDialog;
+import android.app.DatePickerDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
@@ -12,17 +14,21 @@ import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.text.InputType;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.Menu;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -32,7 +38,9 @@ import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
 
 import java.io.File;
+import java.util.Calendar;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -41,6 +49,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.attendanceai.camera.CameraBackend;
 import org.attendanceai.camera.CameraFrame;
 
+import org.attendanceai.enrol.EnrolmentDetails;
+import org.attendanceai.enrol.EnrolmentWarnings;
+import org.attendanceai.enrol.NameGate;
 import org.attendanceai.pipeline.FacePipeline;
 import org.attendanceai.pipeline.FailureDiagnosis;
 import org.attendanceai.presentation.lockscreen.LockScreenActivity;
@@ -48,6 +59,7 @@ import org.attendanceai.presentation.lockscreen.SecurityGate;
 import org.attendanceai.vision.CameraFacing;
 import org.attendanceai.vision.CameraFacingState;
 import org.attendanceai.vision.CameraXSource;
+import org.attendanceai.vision.GuidedCaptureController;
 import org.attendanceai.BuildConfig;
 import org.attendanceai.data.local.db.AttendanceDatabase;
 import org.attendanceai.data.local.db.GroupSummary;
@@ -96,6 +108,14 @@ public final class AttendanceActivity extends AppCompatActivity {
     private TextView logView;
     private Button startButton;
     private Button enrollButton;
+    /** Guided-enrolment panel: step instruction, progress dots and hints. */
+    private TextView guidedView;
+    /** True from the name gate until the person is saved or the flow is cancelled. */
+    private boolean enrolmentInProgress;
+    /** Guards the one-shot transition from capture to the details dialogs. */
+    private boolean enrolmentDialogsShown;
+    /** Name accepted in the gate while the camera permission prompt is open. */
+    private String pendingGuidedName;
     /** CameraX renders the preview into this view; the CameraXSource owns it. */
     private PreviewView previewView;
     /**
@@ -411,12 +431,18 @@ public final class AttendanceActivity extends AppCompatActivity {
         resultView = cardText(16f, 0xFF1D2942);
         root.addView(resultView);
 
+        // Guided multi-angle enrolment panel: hidden until the name gate passes,
+        // then it carries the step instruction, progress and passive hints.
+        guidedView = cardText(15f, 0xFF1D2942);
+        guidedView.setVisibility(View.GONE);
+        root.addView(guidedView);
+
         startButton = actionButton("Start camera", 0xFF6D5DF5);
         startButton.setOnClickListener(v -> toggleCamera());
         root.addView(startButton);
 
-        enrollButton = actionButton("Enrol current face", 0xFF28B8A6);
-        enrollButton.setOnClickListener(v -> enrol());
+        enrollButton = actionButton("Enrol a person (5 poses)", 0xFF28B8A6);
+        enrollButton.setOnClickListener(v -> startEnrolment());
         root.addView(enrollButton);
 
         ScrollView scroller = new ScrollView(this);
@@ -498,6 +524,12 @@ public final class AttendanceActivity extends AppCompatActivity {
      * per 1.5 s. One-shot events (punch, enrol) are always logged.
      */
     private void presentResult(FacePipeline.PipelineResult result) {
+        // Guided enrolment drives its own panel; normal match/punch rendering
+        // stays exactly as it was for ordinary recognition frames.
+        if (result.guided != null) {
+            presentGuided(result.guided);
+            return;
+        }
         long now = System.currentTimeMillis();
         String sim = String.format("%.2f", result.score);
         String who = result.matchedName.length() > 0
@@ -525,6 +557,8 @@ public final class AttendanceActivity extends AppCompatActivity {
             if (!result.error) {
                 refreshBanner(); // roster count changed
             }
+            // A save (or a failure) finishes the guided flow's UI either way.
+            endGuidedUi();
             enrolStickyUntilMs = now + ENROL_STICKY_MS;
             return;
         }
@@ -675,6 +709,14 @@ public final class AttendanceActivity extends AppCompatActivity {
     }
 
     private void stopCamera() {
+        // Stopping the camera mid-capture makes the guided flow impossible to
+        // finish (the state machine is frame-driven), so abandon it cleanly
+        // instead of leaving a stalled "Step n of 5" panel on screen.
+        if (enrolmentInProgress && pipeline != null && !pipeline.guidedComplete()) {
+            engine.execute(pipeline::cancelGuidedCapture);
+            log("guided enrolment cancelled — camera stopped");
+            endGuidedUi();
+        }
         if (camera != null) {
             camera.stop();
             camera = null;
@@ -688,22 +730,330 @@ public final class AttendanceActivity extends AppCompatActivity {
         }
     }
 
-    private void enrol() {
+    // ------------------------------------- guided multi-angle enrolment UI
+
+    /**
+     * Enrol entry point. Item 1 of the spec: NOTHING about the camera or the
+     * capture starts before a valid name is given, so the name gate dialog is
+     * always the first thing the user sees.
+     */
+    private void startEnrolment() {
         if (pipeline == null) {
             logThrottled("enrol-blocked:" + pipelineFailureNote,
-                    "enrollment blocked: face model unavailable (" + pipelineFailureNote + ")");
+                    "enrolment blocked: face model unavailable (" + pipelineFailureNote + ")");
             return;
         }
-        if (lastFrame == null) {
-            log("no frame captured yet — cannot enrol");
+        if (enrolmentInProgress) {
+            log("guided enrolment is already running — finish or cancel it first");
             return;
         }
-        int next = store.loadRoster().size() + 1;
-        enrollNamed("Person " + next);
+        showNameGate();
     }
 
-    private void enrollNamed(String name) {
-        pipeline.enrollBestFace(lastFrame, name);
+    /**
+     * Name gate: required, trimmed, non-blank, at most
+     * {@link NameGate#MAX_NAME_LENGTH} characters. "Continue" stays disabled
+     * (validation message next to the field) until the name is acceptable.
+     */
+    private void showNameGate() {
+        final EditText nameField = new EditText(this);
+        nameField.setHint("Person name");
+        nameField.setSingleLine(true);
+        nameField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        FrameLayout holder = new FrameLayout(this);
+        int pad = dp(20);
+        holder.setPadding(pad, 0, pad, 0);
+        holder.addView(nameField);
+
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Step 1 — who is this?")
+                .setMessage("Enter the name first. The 5-pose guided capture starts "
+                        + "only after you continue.")
+                .setView(holder)
+                .setPositiveButton("Continue", null)
+                .setNegativeButton("Cancel", null)
+                .create();
+        dialog.setOnShowListener(shown ->
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                    String reason = NameGate.invalidReason(nameField.getText().toString());
+                    if (!reason.isEmpty()) {
+                        nameField.setError(reason);
+                        return;
+                    }
+                    dialog.dismiss();
+                    confirmDuplicateOrStart(NameGate.normalise(nameField.getText().toString()));
+                }));
+        dialog.show();
+    }
+
+    /**
+     * Item 1: an existing (case-insensitive, trimmed) name is a warning the user
+     * may continue past — never a hard block.
+     */
+    private void confirmDuplicateOrStart(String name) {
+        if (pipeline == null) {
+            log("enrolment blocked: face model unavailable (" + pipelineFailureNote + ")");
+            return;
+        }
+        String existing = EnrolmentWarnings.duplicateName(name, pipeline.rosterNames());
+        if (existing == null) {
+            beginGuided(name);
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Name already exists")
+                .setMessage(EnrolmentWarnings.duplicateNameMessage(existing))
+                .setPositiveButton("Yes, continue", (d, w) -> beginGuided(name))
+                .setNegativeButton("No", null)
+                .show();
+    }
+
+    /**
+     * Starts the guided capture, bringing the camera up first when needed: the
+     * state machine is driven by frames, so it cannot run without a live camera.
+     */
+    private void beginGuided(String name) {
+        if (pipeline == null) {
+            log("enrolment blocked: face model unavailable (" + pipelineFailureNote + ")");
+            return;
+        }
+        pendingGuidedName = null;
+        if (!running) {
+            log("guided enrolment: starting the camera");
+            startCamera();
+            if (!running) {
+                // Either the permission prompt is open or the camera failed;
+                // both report themselves. Remember the name so the flow resumes
+                // once permission is granted.
+                pendingGuidedName = name;
+                return;
+            }
+        }
+        startGuidedCapture(name);
+    }
+
+    private void startGuidedCapture(String name) {
+        pendingGuidedName = null;
+        final FacePipeline target = pipeline;
+        if (target == null) {
+            log("enrolment blocked: face model unavailable (" + pipelineFailureNote + ")");
+            endGuidedUi();
+            return;
+        }
+        enrolmentInProgress = true;
+        enrolmentDialogsShown = false;
+        guidedView.setText("Step 1 of 5 — Look up\n\u25CB\u25CB\u25CB\u25CB\u25CB");
+        guidedView.setVisibility(View.VISIBLE);
+        // The session state is touched on the pipeline's own executor, the same
+        // thread that runs detection for every frame of the capture.
+        try {
+            engine.execute(() -> {
+                String problem = target.beginGuidedCapture(name);
+                if (problem.isEmpty()) {
+                    runOnUiThread(() -> log("guided enrolment started for "
+                            + name + " — follow the 5 poses"));
+                } else {
+                    runOnUiThread(() -> {
+                        endGuidedUi();
+                        log(problem);
+                    });
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            endGuidedUi();
+            log("guided enrolment could not start: pipeline is shutting down");
+        }
+    }
+
+    /**
+     * Renders one guided-enrolment frame: instruction, "Step n of 5" progress
+     * and a dot row, plus the passive no-face hint and the multi-face warning.
+     * When the fifth pose lands, the warnings/details dialogs start exactly once.
+     */
+    private void presentGuided(FacePipeline.GuidedStatus guided) {
+        StringBuilder text = new StringBuilder();
+        if (guided.complete) {
+            text.append("All ").append(guided.stepCount).append(" poses captured (")
+                    .append(guided.embeddingCount)
+                    .append(guided.embeddingCount == 1 ? " embedding)." : " embeddings).");
+        } else {
+            text.append("Step ").append(guided.step == null ? 1 : guided.step.stepNumber())
+                    .append(" of ").append(guided.stepCount).append(" — ")
+                    .append(guided.instruction)
+                    .append('\n').append(progressDots(guided.capturedCount, guided.stepCount));
+            if (guided.waitingForEyeOpen) {
+                text.append("\nnow open your eyes");
+            }
+        }
+        if (guided.noFaceHint) {
+            text.append('\n').append(GuidedCaptureController.NO_FACE_HINT);
+        }
+        if (guided.multiFaceWarning) {
+            text.append('\n').append(GuidedCaptureController.MULTI_FACE_HINT);
+        }
+        guidedView.setText(text.toString());
+        guidedView.setVisibility(View.VISIBLE);
+        if (guided.complete) {
+            onCaptureComplete(guided);
+        }
+    }
+
+    /** "●●○○○" — one dot per step, filled for the captured ones. */
+    private static String progressDots(int captured, int total) {
+        StringBuilder dots = new StringBuilder();
+        for (int i = 0; i < total; i++) {
+            dots.append(i < captured ? '\u25CF' : '\u25CB');
+        }
+        return dots.toString();
+    }
+
+    /**
+     * All five poses captured. Item 2's similar-face check runs first (a soft
+     * "save anyway / cancel" warning), then item 3's optional details form.
+     */
+    private void onCaptureComplete(FacePipeline.GuidedStatus guided) {
+        if (enrolmentDialogsShown) {
+            return;
+        }
+        enrolmentDialogsShown = true;
+        EnrolmentWarnings.SimilarFace similar = guided.similarFace;
+        if (similar == null) {
+            showDetailsForm();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Possible duplicate face")
+                .setMessage(EnrolmentWarnings.similarFaceMessage(similar))
+                // Not dismissable by Back: the user must choose, otherwise the
+                // captured poses would be stranded with no dialog on screen.
+                .setCancelable(false)
+                .setPositiveButton("Save anyway", (d, w) -> showDetailsForm())
+                .setNegativeButton("Cancel", (d, w) -> cancelGuided())
+                .show();
+    }
+
+    /** Abandons the running enrolment without saving anything. */
+    private void cancelGuided() {
+        if (pipeline != null) {
+            engine.execute(pipeline::cancelGuidedCapture);
+        }
+        log("guided enrolment cancelled — nothing was saved");
+        endGuidedUi();
+    }
+
+    /** Hides the guided panel and clears the flow flags. */
+    private void endGuidedUi() {
+        enrolmentInProgress = false;
+        enrolmentDialogsShown = false;
+        pendingGuidedName = null;
+        if (guidedView != null) {
+            guidedView.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * Item 3: the optional details form, shown after the five poses and before
+     * the final save. Every field may stay empty — Save works either way; only a
+     * non-empty mobile number is checked (loosely: digits, '+', spaces and
+     * hyphens, 7-15 digits).
+     */
+    private void showDetailsForm() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(20);
+        form.setPadding(pad, 0, pad, 0);
+
+        final EditText identity = new EditText(this);
+        identity.setHint("Identity number (optional)");
+        identity.setSingleLine(true);
+        form.addView(identity);
+
+        final long[] dob = {0L};
+        final Button dobButton = new Button(this);
+        dobButton.setText("Date of birth: not set");
+        dobButton.setAllCaps(false);
+        dobButton.setOnClickListener(v -> {
+            Calendar start = Calendar.getInstance();
+            if (dob[0] > 0L) {
+                start.setTimeInMillis(dob[0]);
+            }
+            new DatePickerDialog(this, (view, year, month, day) -> {
+                Calendar chosen = Calendar.getInstance();
+                chosen.set(year, month, day, 0, 0, 0);
+                chosen.set(Calendar.MILLISECOND, 0);
+                dob[0] = chosen.getTimeInMillis();
+                dobButton.setText(String.format(Locale.US,
+                        "Date of birth: %04d-%02d-%02d", year, month + 1, day));
+            }, start.get(Calendar.YEAR), start.get(Calendar.MONTH),
+                    start.get(Calendar.DAY_OF_MONTH)).show();
+        });
+        form.addView(dobButton);
+
+        TextView bloodLabel = new TextView(this);
+        bloodLabel.setText("Blood group");
+        form.addView(bloodLabel);
+        final Spinner blood = new Spinner(this);
+        ArrayAdapter<String> bloodAdapter = new ArrayAdapter<String>(this,
+                android.R.layout.simple_spinner_item, EnrolmentDetails.BLOOD_GROUPS);
+        bloodAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        blood.setAdapter(bloodAdapter);
+        // Last entry is "Unknown" = nothing chosen (stored as NULL).
+        blood.setSelection(EnrolmentDetails.BLOOD_GROUPS.length - 1);
+        form.addView(blood);
+
+        final EditText mobile = new EditText(this);
+        mobile.setHint("Mobile number (optional)");
+        mobile.setSingleLine(true);
+        mobile.setInputType(InputType.TYPE_CLASS_PHONE);
+        form.addView(mobile);
+
+        final TextView error = new TextView(this);
+        error.setTextColor(0xFFC23B5A);
+        form.addView(error);
+
+        ScrollView scroller = new ScrollView(this);
+        scroller.addView(form);
+
+        final AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Details — all optional")
+                .setView(scroller)
+                // Save or Cancel are the only exits: Back must not silently drop
+                // the five captured poses.
+                .setCancelable(false)
+                .setPositiveButton("Save", null)
+                .setNegativeButton("Cancel", (d, w) -> cancelGuided())
+                .create();
+        dialog.setOnShowListener(shown ->
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                    String mobileText = mobile.getText().toString();
+                    if (!EnrolmentDetails.isValidMobile(mobileText)) {
+                        error.setText("Mobile number: 7-15 digits, using only digits, "
+                                + "'+', spaces or hyphens.");
+                        return;
+                    }
+                    Long dobValue = dob[0] > 0L ? Long.valueOf(dob[0]) : null;
+                    EnrolmentDetails details = EnrolmentDetails.of(
+                            identity.getText().toString(),
+                            dobValue,
+                            EnrolmentDetails.BLOOD_GROUPS[blood.getSelectedItemPosition()],
+                            mobileText);
+                    dialog.dismiss();
+                    saveEnrolment(details);
+                }));
+        dialog.show();
+    }
+
+    /** Hands the captured embeddings plus the (possibly empty) details to save. */
+    private void saveEnrolment(EnrolmentDetails details) {
+        if (pipeline == null) {
+            log("enrolment save blocked: face model unavailable");
+            endGuidedUi();
+            return;
+        }
+        engine.execute(() -> pipeline.completeGuidedCapture(details));
+        log(details.isEmpty()
+                ? "guided enrolment: saving (no optional details filled in)"
+                : "guided enrolment: saving with the optional details");
     }
 
     /**
@@ -792,6 +1142,13 @@ public final class AttendanceActivity extends AppCompatActivity {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 log("camera permission granted");
                 startCamera();
+                // The name gate accepted a name while the prompt was open —
+                // resume the guided flow now that frames can arrive.
+                if (pendingGuidedName != null && running) {
+                    String name = pendingGuidedName;
+                    pendingGuidedName = null;
+                    startGuidedCapture(name);
+                }
             } else {
                 resultView.setText("Camera permission is required to start the camera");
                 log("camera permission denied — camera remains stopped");

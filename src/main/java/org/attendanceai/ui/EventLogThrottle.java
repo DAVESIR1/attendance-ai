@@ -141,10 +141,10 @@ public final class EventLogThrottle {
     }
 
     /**
-     * True for every outcome produced by FacePipeline.enrollBestFace — success
-     * ("enrolled …") and its five distinct failure messages. Enrol outcomes
-     * freeze the live result line so the confirmation cannot be overwritten by
-     * the next camera frame ~100 ms later, and are always logged exactly once.
+     * True for every outcome of the guided enrolment flow — the success line
+     * ("enrolled …") and its distinct failure messages. Enrol outcomes freeze
+     * the live result line so the confirmation cannot be overwritten by the
+     * next camera frame ~100 ms later, and are always logged exactly once.
      */
     public static boolean isEnrolmentStatus(String status) {
         if (status == null) {

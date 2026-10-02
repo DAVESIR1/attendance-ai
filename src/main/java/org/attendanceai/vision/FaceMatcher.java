@@ -5,17 +5,31 @@
 package org.attendanceai.vision;
 
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 /**
- * Cosine-similarity matcher over per-person mean templates. Pure JVM code,
+ * Cosine-similarity matcher over per-person embedding sets. Pure JVM code,
  * unit-tested; both the MobileFaceNet embeddings and the geometric fallback
  * signatures flow through the same matching path.
+ *
+ * A person may hold several embeddings (the guided multi-angle enrolment stores
+ * one per captured pose). Matching therefore compares the live face against
+ * EVERY stored embedding of every person and keeps the best score per person —
+ * a side-on capture that scores 0.9 must not be hidden behind a frontal capture
+ * that scores 0.4.
  */
 public final class FaceMatcher {
 
     /** Best match is this when nothing scores above the threshold. */
     public static final String NO_MATCH_ID = "";
+
+    /**
+     * Score floor used before any comparison. Cosine similarity can legitimately
+     * be as low as -1, so "no embeddings at all" must start below that.
+     */
+    public static final float NO_SCORE = -2f;
+
 
     private FaceMatcher() {
     }
@@ -66,22 +80,42 @@ public final class FaceMatcher {
     }
 
     /**
-     * Matches {@code query} against {@code templates} (personId → mean
-     * vector). Returns the single best candidate.
+     * Best cosine score between {@code query} and any of one person's stored
+     * embeddings. Returns {@link #NO_SCORE} when the person has none, so an
+     * empty entry can never beat a real (even negative) score.
      */
-    public static MatchResult match(float[] query, Map<String, float[]> templates,
+    public static float bestScore(float[] query, List<float[]> templates) {
+        float best = NO_SCORE;
+        if (templates == null) {
+            return best;
+        }
+        for (float[] template : templates) {
+            float score = cosine(query, template);
+            if (score > best) {
+                best = score;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Matches {@code query} against per-person embedding sets
+     * (personId → all stored embeddings). Each person is scored by their
+     * best-matching embedding; the single best person is returned.
+     */
+    public static MatchResult match(float[] query, Map<String, ? extends List<float[]>> templates,
             float threshold) {
         String bestId = NO_MATCH_ID;
-        float bestScore = -1f;
-        for (Map.Entry<String, float[]> entry : templates.entrySet()) {
-            float score = cosine(query, entry.getValue());
-            if (score > bestScore) {
-                bestScore = score;
+        float topScore = NO_SCORE;
+        for (Map.Entry<String, ? extends List<float[]>> entry : templates.entrySet()) {
+            float score = bestScore(query, entry.getValue());
+            if (score > topScore) {
+                topScore = score;
                 bestId = entry.getKey();
             }
         }
-        boolean accepted = bestId.length() > 0 && bestScore >= threshold;
-        return new MatchResult(accepted ? bestId : "", bestScore, accepted);
+        boolean accepted = bestId.length() > 0 && topScore >= threshold;
+        return new MatchResult(accepted ? bestId : "", topScore, accepted);
     }
 
     /** Result of one matcher query. Empty id means "no acceptable match". */
