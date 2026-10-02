@@ -1,11 +1,46 @@
 # Attendance AI — Development Plan
 
-> Status: **0.3.0 stage delivered** (navigation shell + camera switch + groups on
-> top of the Phase 2/3 pipeline). The repository originally contained only the
-> Phase 1 scaffold (license/readme/gitignore/local.properties) and placeholders
-> referencing "Phase 3" model files; this document replaces the implicit plan
-> with an explicit one so any session can continue coherently — **and so no
-> future agent mistakes the app for feature-complete.**
+> Status: **0.4.0 stage delivered** (guided multi-angle enrolment: name gate →
+> 5-step pose capture → optional details form). Before that: 0.3.0 (navigation
+> shell + camera switch + groups) on top of the Phase 2/3 pipeline. The
+> repository originally contained only the Phase 1 scaffold (license/readme/
+> gitignore/local.properties) and placeholders referencing "Phase 3" model
+> files; this document replaces the implicit plan with an explicit one so any
+> session can continue coherently — **and so no future agent mistakes the app
+> for feature-complete.**
+
+## Delivered in 0.4.0 (`0.4.0-guided-enrolment`)
+
+* **Guided multi-angle enrolment** — the single-tap "Enrol current face" button
+  is gone. "Enrol a person (5 poses)" now runs a four-screen flow:
+  1. **Name gate** (`enrol/NameGate`) — required, trimmed, non-blank, max 100
+     chars, shown *before* anything camera-related starts; an existing name
+     (case-insensitive, trimmed) raises a soft "already exists — continue
+     anyway?" dialog (`enrol/EnrolmentWarnings.duplicateName`), never a block.
+  2. **Five-step capture** (`vision/CaptureStep`,
+     `vision/GuidedCaptureController`, `vision/PoseMetrics`): LOOK_UP →
+     LOOK_DOWN → LOOK_LEFT → LOOK_RIGHT → BLINK, each with an on-screen
+     instruction, a "Step n of 5" line plus `●●○○○` dots. Yaw/pitch come from
+     the nose-tip displacement relative to the eye corners; the blink step uses
+     the six-point eye aspect ratio (shut below 0.20, reopen above 0.25 within
+     1 s). A pose must hold **3 consecutive frames** before its frame is
+     captured; no face for 5 s shows a passive "keep your face in frame" hint;
+     several faces use the largest bounding box with a warning line. One
+     embedding is computed per captured step.
+  3. **Optional details form** — identity number, date of birth (date picker),
+     blood group dropdown and mobile number, all optional and all saved as SQL
+     NULL when left blank (`enrol/EnrolmentDetails`).
+  4. **Similar-face check** — before saving, the new embeddings are compared
+     with every existing person's embeddings; best cosine > 0.85 raises
+     "looks similar to … — save anyway?".
+* **Multi-embedding matching** — a person's Room `people.faceEmbeddings` blob
+  now holds all captured embeddings (the existing `EmbeddingCodec` list format,
+  via `AttendanceStore.Person.createMulti`), and `FaceMatcher.match` scores a
+  live face against **every** embedding of every person, taking the best.
+* **Room schema v2** — `MIGRATION_1_2` adds the optional person columns
+  (identity number, dob, blood group, mobile) when missing and is a no-op when
+  they are already there (`data/local/db/PersonOptionalColumns`), so the
+  upgrade of any existing v1 database is safe.
 
 ## Delivered in 0.3.0 (`0.3.0-nav-groups-camswitch`)
 
@@ -33,14 +68,16 @@
 
 | Missing item | Planned stage |
 |---|---|
-| Guided multi-angle enrolment (several poses per person) | **4-B** |
-| Animated attendance display; present/absent popup | **4-B** |
-| Attendance matching scoped to one group | **4-C** |
 | Home manual entry + date picker (mark attendance by hand) | **4-C** |
+| Animated attendance display; present/absent popup | **4-C** |
+| Attendance matching scoped to one group | **4-C** |
 | Reports: PDF/Excel export, date ranges | **4-D** |
 | Theme / visual polish pass | **5** |
 | Backup / cloud sync | **6** |
 | Export / import of the whole dataset | **7** |
+
+Guided multi-angle enrolment (several poses per person) is **implemented** in
+0.4.0 — see the section above.
 
 Those placeholders are visible on the device too: the Reports screen says
 "Reports - coming in Stage 4-D", the Settings screen says more options are
