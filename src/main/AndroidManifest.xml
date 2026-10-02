@@ -32,6 +32,23 @@
                   android:label="@string/activity_name"
                   android:theme="@style/Theme.AttendanceAI"
                   android:exported="false" />
+
+        <!-- Item 2 navigation shell: Reports / Settings placeholders reachable
+             from the Home screen's menu. Their companions are also the
+             re-auth-gated recovery-phrase explanation screen. Not exported:
+             they are only ever launched from the unlocked Home screen. -->
+        <activity android:name="org.attendanceai.ui.ReportsActivity"
+                  android:label="@string/activity_name"
+                  android:theme="@style/Theme.AttendanceAI"
+                  android:exported="false" />
+        <activity android:name="org.attendanceai.ui.SettingsActivity"
+                  android:label="@string/activity_name"
+                  android:theme="@style/Theme.AttendanceAI"
+                  android:exported="false" />
+        <activity android:name="org.attendanceai.ui.RecoveryPhraseActivity"
+                  android:label="@string/activity_name"
+                  android:theme="@style/Theme.AttendanceAI"
+                  android:exported="false" />
     </application>
 
 </manifest>

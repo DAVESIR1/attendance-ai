@@ -14,11 +14,13 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.util.AttributeSet;
 import android.view.Gravity;
+import android.view.Menu;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -119,6 +121,26 @@ public final class AttendanceActivity extends AppCompatActivity {
                     initAfterUnlock();
                 } else {
                     finish();
+                }
+            });
+
+    /**
+     * Settings is launched for a result so a roster clear performed there can
+     * reload this screen's face templates (and refresh the banner) instead of
+     * leaving the matcher matching against people that no longer exist.
+     */
+    private final ActivityResultLauncher<Intent> settingsLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                Intent data = result.getData();
+                String action = data == null ? null : data.getAction();
+                if (result.getResultCode() == RESULT_OK
+                        && SettingsActivity.RESULT_RELOAD_TEMPLATES.equals(action)) {
+                    if (pipeline != null) {
+                        pipeline.reloadTemplates();
+                    }
+                    refreshBanner();
+                    log("roster changed in Settings — face templates reloaded");
                 }
             });
 
@@ -320,10 +342,22 @@ public final class AttendanceActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
 
-        // Preview + floating camera-switch icon (item 1): the button flips
-        // the facing and restarts the session without touching the pipeline.
+        // Preview + floating icons (item 1 camera switch, item 2 navigation):
+        // the buttons only drive camera/navigation, never the pipeline.
         FrameLayout previewFrame = new FrameLayout(this);
         previewFrame.addView(previewView);
+        ImageButton menuButton = new ImageButton(this);
+        menuButton.setImageResource(android.R.drawable.ic_menu_more);
+        menuButton.setContentDescription("Open menu");
+        menuButton.setBackground(roundBackground(0xDFFFFFFF, 18));
+        FrameLayout.LayoutParams menuLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START);
+        menuLp.setMargins(dp(12), dp(12), 0, 0);
+        menuButton.setLayoutParams(menuLp);
+        menuButton.setOnClickListener(v -> openNavigationMenu(v));
+        previewFrame.addView(menuButton);
         ImageButton switchCamera = new ImageButton(this);
         switchCamera.setImageResource(android.R.drawable.ic_menu_rotate);
         switchCamera.setContentDescription("Switch camera");
@@ -352,10 +386,6 @@ public final class AttendanceActivity extends AppCompatActivity {
         enrollButton = actionButton("Enrol current face", 0xFF28B8A6);
         enrollButton.setOnClickListener(v -> enrol());
         root.addView(enrollButton);
-
-        Button clear = actionButton("Clear roster", 0xFF9A79D9);
-        clear.setOnClickListener(v -> clearRoster());
-        root.addView(clear);
 
         ScrollView scroller = new ScrollView(this);
         scroller.setFillViewport(true);
@@ -644,20 +674,38 @@ public final class AttendanceActivity extends AppCompatActivity {
         pipeline.enrollBestFace(lastFrame, name);
     }
 
-    private void clearRoster() {
-        if (pipeline == null) {
-            logThrottled("roster-blocked:" + pipelineFailureNote,
-                    "roster controls unavailable until the face model loads ("
-                            + pipelineFailureNote + ")");
-            return;
+    /**
+     * Navigation shell (item 2): the floating top-left button opens a small
+     * menu with the three destinations. Plain {@link PopupMenu} plus activities
+     * — no Navigation component, no new library, and nothing added to the
+     * existing Compose lock screen.
+     */
+    private void openNavigationMenu(View anchor) {
+        PopupMenu popup = new PopupMenu(this, anchor);
+        for (NavTarget target : NavTarget.values()) {
+            popup.getMenu().add(Menu.NONE, target.getMenuId(), target.ordinal(),
+                    target.getLabel());
         }
-        try {
-            store.saveRoster(new java.util.LinkedHashMap<String, AttendanceStore.Person>());
-            pipeline.reloadTemplates();
-            resultView.setText("roster cleared");
-            log("roster cleared");
-        } catch (java.io.IOException e) {
-            log("clear failed: " + e.getMessage());
+        popup.setOnMenuItemClickListener(item -> {
+            onNavigationSelected(NavTarget.fromMenuId(item.getItemId()));
+            return true;
+        });
+        popup.show();
+    }
+
+    /** Routes one menu choice; Home is this screen, so it only acknowledges. */
+    private void onNavigationSelected(NavTarget target) {
+        switch (target) {
+            case REPORTS:
+                startActivity(ReportsActivity.createIntent(this));
+                break;
+            case SETTINGS:
+                settingsLauncher.launch(SettingsActivity.createIntent(this));
+                break;
+            case HOME:
+            default:
+                log("menu: Home is already open");
+                break;
         }
     }
 
