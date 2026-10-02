@@ -49,6 +49,17 @@
                   android:label="@string/activity_name"
                   android:theme="@style/Theme.AttendanceAI"
                   android:exported="false" />
+
+        <!-- Item 3 groups: Create Group (checked roster list) and Group Detail
+             (members + Get attendance). Same fail-closed rule as above. -->
+        <activity android:name="org.attendanceai.ui.CreateGroupActivity"
+                  android:label="@string/activity_name"
+                  android:theme="@style/Theme.AttendanceAI"
+                  android:exported="false" />
+        <activity android:name="org.attendanceai.ui.GroupDetailActivity"
+                  android:label="@string/activity_name"
+                  android:theme="@style/Theme.AttendanceAI"
+                  android:exported="false" />
     </application>
 
 </manifest>

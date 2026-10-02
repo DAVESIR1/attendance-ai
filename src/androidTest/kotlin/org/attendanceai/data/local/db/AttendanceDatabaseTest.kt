@@ -214,6 +214,39 @@ class AttendanceDatabaseTest {
         }
     }
 
+    @Test
+    fun groupInsertWithMembersWritesCorrectMembershipRows() = runBlocking {
+        val first = database.personDao().insert(person("Ada", 0L))
+        val second = database.personDao().insert(person("Grace", 0L))
+
+        // The exact call the Create Group screen makes (placeholder id 0).
+        val groupId = database.groupDao().insertWithMembers(
+            Group(name = "Engineering", createdAt = 5L),
+            GroupMembership.rows(0L, listOf("person-$first", "person-$second")),
+        )
+
+        assertEquals("Engineering", database.groupDao().getById(groupId)?.name)
+        assertEquals(setOf(first, second), database.groupDao().getMemberIds(groupId).toSet())
+        assertEquals(2, database.groupDao().getMembers(groupId).size)
+        assertEquals(listOf("Ada", "Grace"), database.groupDao().getPeople(groupId).map { it.name })
+    }
+
+    @Test
+    fun clearingTheRosterCascadesGroupMembershipRows() = runBlocking {
+        val personId = database.personDao().insert(person("Cascade", 0L))
+        val groupId = database.groupDao().insert(Group(name = "Doomed", createdAt = 1L))
+        database.groupMemberDao().insert(GroupMember(groupId, personId))
+
+        // The same call the Settings "Clear roster" action makes.
+        RoomAttendanceStore(database)
+            .saveRoster(LinkedHashMap<String, AttendanceStore.Person>())
+
+        assertTrue(database.personDao().getAll().isEmpty())
+        assertTrue(database.groupMemberDao().byGroup(groupId).isEmpty())
+        // Only the people (and their links) go — the group row itself survives.
+        assertNotNull(database.groupDao().getById(groupId))
+    }
+
     private fun person(name: String, createdAt: Long): Person = Person(
         name = name,
         faceEmbeddings = EmbeddingCodec.encode(listOf(floatArrayOf(0.1f, 0.2f))),

@@ -9,12 +9,23 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.attendanceai.data.local.db.entities.AppSettingEntry
 import org.attendanceai.data.local.db.entities.AttendanceRecord
+import org.attendanceai.data.local.db.entities.Group
+import org.attendanceai.data.local.db.entities.GroupMember
 import org.attendanceai.data.local.db.entities.Person
 import org.attendanceai.store.AttendanceStore
 import org.attendanceai.store.Json
 import org.attendanceai.store.Settings
 import java.io.IOException
 
+
+/**
+ * One created group with its membership count — what the Home screen's group
+ * cards display.
+ */
+data class GroupSummary(val id: Long, val name: String, val memberCount: Int)
+
+/** One group with its members' display names — what the detail screen shows. */
+data class GroupWithMembers(val id: Long, val name: String, val memberNames: List<String>)
 
 /**
  * Synchronous compatibility facade for the existing camera pipeline.
@@ -169,15 +180,72 @@ class RoomAttendanceStore(private val database: AttendanceDatabase) {
         }
     }
 
+    // ------------------------------------------------------------ groups
+
+    /**
+     * Loads every group with its membership count, ordered by name — the Home
+     * screen's card list. Counts come from the join table, so a group whose
+     * members were deleted (cascade) correctly reports zero.
+     */
+    fun loadGroups(): List<GroupSummary> = runDb {
+        database.groupDao().getAll().map { group ->
+            GroupSummary(
+                id = group.id,
+                name = group.name,
+                memberCount = database.groupDao().getMemberIds(group.id).size,
+            )
+        }
+    }
+
+    /** Loads one group with its members' names, or null when it is gone. */
+    fun loadGroup(groupId: Long): GroupWithMembers? = runDb {
+        val group = database.groupDao().getById(groupId) ?: return@runDb null
+        GroupWithMembers(
+            id = group.id,
+            name = group.name,
+            memberNames = database.groupDao().getPeople(groupId).map { it.name },
+        )
+    }
+
+    /**
+     * Creates a group and its membership rows in one Room transaction.
+     *
+     * [memberLegacyIds] are the roster ids the Home screen already uses
+     * (`person-<rowid>`); unknown ids are dropped by [GroupMembership.rows]
+     * rather than failing the foreign key. A blank name and a duplicate name
+     * are rejected as [IllegalArgumentException] so the UI can explain the
+     * problem precisely; storage failures surface as [IOException], matching
+     * the roster/settings writes above.
+     */
+    @Throws(IOException::class)
+    fun createGroup(name: String, memberLegacyIds: List<String>): Long {
+        val trimmed = name.trim()
+        require(trimmed.isNotEmpty()) { "group name must not be blank" }
+        try {
+            return runDb {
+                if (database.groupDao().getAll().any { it.name.equals(trimmed, ignoreCase = true) }) {
+                    throw IllegalArgumentException("a group named \"$trimmed\" already exists")
+                }
+                database.groupDao().insertWithMembers(
+                    Group(name = trimmed, createdAt = System.currentTimeMillis()),
+                    // Placeholder group id 0: insertWithMembers stamps the real
+                    // id on every row inside its transaction.
+                    GroupMembership.rows(0L, memberLegacyIds),
+                )
+            }
+        } catch (invalid: IllegalArgumentException) {
+            throw invalid
+        } catch (failure: RuntimeException) {
+            throw IOException("encrypted group write failed", failure)
+        }
+    }
+
     private fun <T> runDb(block: suspend () -> T): T =
         runBlocking(Dispatchers.IO) { block() }
 
-    private fun legacyId(id: Long): String = "person-$id"
+    private fun legacyId(id: Long): String = GroupMembership.LEGACY_PREFIX + id
 
-    private fun databaseId(legacyId: String): Long? =
-        legacyId.removePrefix("person-")
-            .takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
-            ?.toLongOrNull()
+    private fun databaseId(legacyId: String): Long? = GroupMembership.databaseId(legacyId)
 
     private fun millisForEpochDay(day: Long): Long = day * MILLIS_PER_DAY
 

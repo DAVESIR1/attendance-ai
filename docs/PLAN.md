@@ -1,10 +1,51 @@
 # Attendance AI — Development Plan
 
-> Status: **Phase 2 in progress** (Android application skeleton + ML pipeline).
-> The repository only contained the Phase 1 scaffold (license/readme/gitignore/
-> local.properties) and placeholders referencing "Phase 3" model files. This
-> document replaces the implicit plan with an explicit one so any session can
-> continue coherently.
+> Status: **0.3.0 stage delivered** (navigation shell + camera switch + groups on
+> top of the Phase 2/3 pipeline). The repository originally contained only the
+> Phase 1 scaffold (license/readme/gitignore/local.properties) and placeholders
+> referencing "Phase 3" model files; this document replaces the implicit plan
+> with an explicit one so any session can continue coherently — **and so no
+> future agent mistakes the app for feature-complete.**
+
+## Delivered in 0.3.0 (`0.3.0-nav-groups-camswitch`)
+
+* **Front/back camera switch** — `vision/CameraFacing.kt` (`CameraFacing` +
+  `CameraFacingState`, front by default) and a `facing` parameter on
+  `CameraXSource`, which now *prefers* that `CameraSelector` and keeps the other
+  as a fallback. The Home preview carries a floating flip button that stops and
+  restarts the session without touching the detection/matching/logging pipeline.
+* **Navigation shell** — Home (the existing camera + enrol + roster screen, and
+  still the default), Reports (`ReportsActivity`, placeholder) and Settings
+  (`SettingsActivity`), opened from a floating top-left menu button
+  (`PopupMenu` + plain activities; no Navigation component, and no change to the
+  Compose lock screen). Settings now owns **Clear roster** (moved off Home) and a
+  **View recovery phrase** entry that re-authenticates through the existing
+  `LockScreenActivity` and then explains, honestly, that the phrase was shown
+  once at setup and is never stored (Phase 1 keeps only a hardware-wrapped key).
+* **Groups** — the `Group`/`GroupMember` Room entities and DAOs (encrypted,
+  foreign keys with ON DELETE CASCADE) are now reachable from the UI:
+  `RoomAttendanceStore.createGroup/loadGroups/loadGroup`, a Create Group screen
+  (name field + checkbox roster, Create gated until a name and one person),
+  group cards on Home, and a Group Detail screen whose "Get attendance" button
+  starts the existing capture flow **unfiltered** for now.
+
+## Still missing from the original spec (explicitly planned — do NOT assume done)
+
+| Missing item | Planned stage |
+|---|---|
+| Guided multi-angle enrolment (several poses per person) | **4-B** |
+| Animated attendance display; present/absent popup | **4-B** |
+| Attendance matching scoped to one group | **4-C** |
+| Home manual entry + date picker (mark attendance by hand) | **4-C** |
+| Reports: PDF/Excel export, date ranges | **4-D** |
+| Theme / visual polish pass | **5** |
+| Backup / cloud sync | **6** |
+| Export / import of the whole dataset | **7** |
+
+Those placeholders are visible on the device too: the Reports screen says
+"Reports - coming in Stage 4-D", the Settings screen says more options are
+coming later, and the Group Detail screen states that matching still runs
+against the full roster (Stage 4-C).
 
 ## Guiding constraints
 

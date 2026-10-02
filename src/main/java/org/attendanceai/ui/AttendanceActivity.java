@@ -20,6 +20,7 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -49,7 +50,9 @@ import org.attendanceai.vision.CameraFacingState;
 import org.attendanceai.vision.CameraXSource;
 import org.attendanceai.BuildConfig;
 import org.attendanceai.data.local.db.AttendanceDatabase;
+import org.attendanceai.data.local.db.GroupSummary;
 import org.attendanceai.data.local.db.LegacyJsonMigrator;
+import org.attendanceai.data.local.db.RoomAttendanceStore;
 import org.attendanceai.data.local.db.VaultSession;
 import org.attendanceai.store.AttendanceStore;
 
@@ -66,6 +69,19 @@ import org.attendanceai.store.AttendanceStore;
 public final class AttendanceActivity extends AppCompatActivity {
 
     private static final int PERMISSION_REQUEST_CAMERA = 1001;
+
+    /**
+     * Set by Group Detail's "Get attendance" button (item 3): the plan's
+     * existing capture flow starts as soon as Home resumes. Static because the
+     * request crosses from another activity inside the same unlocked process;
+     * it is consumed (compare-and-set) exactly once.
+     */
+    private static final AtomicBoolean PENDING_AUTO_START = new AtomicBoolean(false);
+
+    /** Called by {@link GroupDetailActivity} just before it closes. */
+    static void requestAutoStartCamera() {
+        PENDING_AUTO_START.set(true);
+    }
 
     /**
      * Enrol confirmation holds the live result line for this long — it used to
@@ -88,6 +104,9 @@ public final class AttendanceActivity extends AppCompatActivity {
      * here, not in the camera source, so it survives camera restarts.
      */
     private final CameraFacingState cameraFacing = new CameraFacingState();
+
+    /** Group cards (item 3), rendered above the camera controls. */
+    private LinearLayout groupCards;
     /** Rate-limits frame statuses to one log line per 1.5 s, deduped by key. */
     private final EventLogThrottle logThrottle = new EventLogThrottle();
     /** Bounded scrollback: the log view never grows past its line cap. */
@@ -332,6 +351,19 @@ public final class AttendanceActivity extends AppCompatActivity {
         subtitle.setTextSize(14f);
         subtitle.setTextColor(0xFF66738D);
         root.addView(subtitle);
+
+        // Groups (item 3): cards sit above the camera controls, with the entry
+        // point to the Create Group screen right below them. Refreshed on every
+        // resume, so Home reflects a newly created group (or a roster clear)
+        // without any extra plumbing.
+        groupCards = new LinearLayout(this);
+        groupCards.setOrientation(LinearLayout.VERTICAL);
+        root.addView(groupCards);
+
+        Button createGroupButton = actionButton("Create group", 0xFF9A79D9);
+        createGroupButton.setOnClickListener(v ->
+                startActivity(CreateGroupActivity.createIntent(this)));
+        root.addView(createGroupButton);
 
         // CameraX needs a view it can drive itself: PreviewView handles the
         // surface, aspect ratio, rotation and scaling, so the app has no
@@ -675,6 +707,49 @@ public final class AttendanceActivity extends AppCompatActivity {
     }
 
     /**
+     * Group cards (item 3): one card per created group with its live member
+     * count; tapping a card opens the group's detail screen. A group whose
+     * people were removed (cascade) simply reports zero members.
+     */
+    private void refreshGroupCards() {
+        if (groupCards == null) {
+            return;
+        }
+        groupCards.removeAllViews();
+        AttendanceDatabase database = VaultSession.database();
+        if (database == null) {
+            return;
+        }
+        List<GroupSummary> groups;
+        try {
+            groups = new RoomAttendanceStore(database).loadGroups();
+        } catch (RuntimeException failure) {
+            log("group list unavailable: " + failure.getClass().getSimpleName());
+            return;
+        }
+        if (groups.isEmpty()) {
+            TextView none = cardText(12f, 0xFF66738D);
+            none.setText("No groups yet — tap Create group to make one.");
+            groupCards.addView(none);
+            return;
+        }
+        for (GroupSummary group : groups) {
+            TextView card = cardText(16f, 0xFF1D2942);
+            int count = group.getMemberCount();
+            card.setText(group.getName() + "  •  " + count
+                    + (count == 1 ? " member" : " members"));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT);
+            lp.bottomMargin = dp(8);
+            card.setLayoutParams(lp);
+            card.setOnClickListener(v ->
+                    startActivity(GroupDetailActivity.createIntent(this, group.getId())));
+            groupCards.addView(card);
+        }
+    }
+
+    /**
      * Navigation shell (item 2): the floating top-left button opens a small
      * menu with the three destinations. Plain {@link PopupMenu} plus activities
      * — no Navigation component, no new library, and nothing added to the
@@ -731,6 +806,14 @@ public final class AttendanceActivity extends AppCompatActivity {
         // before initAfterUnlock() has created the content views.
         if (banner != null && store != null) {
             refreshBanner();
+            refreshGroupCards();
+        }
+        // Group Detail's "Get attendance" returns here and expects the existing
+        // capture flow to be running (unfiltered for now — Stage 4-C note there).
+        if (PENDING_AUTO_START.compareAndSet(true, false)
+                && banner != null && store != null && !running) {
+            log("group attendance: starting the camera");
+            startCamera();
         }
     }
 
