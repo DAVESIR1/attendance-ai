@@ -18,6 +18,7 @@ import org.attendanceai.data.local.db.entities.Person
 import org.attendanceai.store.AttendanceStore
 import org.attendanceai.store.Settings
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -147,6 +148,55 @@ class AttendanceDatabaseTest {
         assertEquals("Compat User", loadedPerson.name)
         assertEquals(1, store.loadRecords().size)
         assertEquals(0.77f, store.loadSettings().similarityThreshold, 0.0001f)
+    }
+
+    @Test
+    fun everyCapturedEmbeddingAndOptionalDetailRoundTrips() {
+        val store = RoomAttendanceStore(database)
+        val embeddings = (1..5).map { index -> FloatArray(4) { (it + index).toFloat() } }
+        val person = AttendanceStore.Person.createMulti("person-9001", "Guided Person", embeddings)
+        person.identityNumber = "ID-1"
+        person.dob = 631152000000L
+        person.bloodGroup = "O+"
+        person.mobile = "+91 98765 43210"
+        val roster = LinkedHashMap<String, AttendanceStore.Person>()
+        roster[person.id] = person
+
+        store.saveRoster(roster)
+        val loaded = store.loadRoster().values.single()
+
+        assertEquals(5, loaded.templates.size)
+        embeddings.forEachIndexed { index, expected ->
+            assertArrayEquals(expected, loaded.templates[index], 0f)
+        }
+        assertEquals("ID-1", loaded.identityNumber)
+        assertEquals(631152000000L, loaded.dob ?: -1L)
+        assertEquals("O+", loaded.bloodGroup)
+        assertEquals("+91 98765 43210", loaded.mobile)
+    }
+
+    @Test
+    fun savingFromACallerWithoutDetailsPreservesTheStoredOnes() {
+        val store = RoomAttendanceStore(database)
+        val first = AttendanceStore.Person.create("person-9002", "Kept Details",
+            floatArrayOf(0.1f, 0.2f))
+        first.bloodGroup = "AB+"
+        first.mobile = "9876543210"
+        val roster = LinkedHashMap<String, AttendanceStore.Person>()
+        roster[first.id] = first
+        store.saveRoster(roster)
+
+        // A later roster write from a caller that knows nothing about details.
+        val updated = AttendanceStore.Person.create("person-9002", "Kept Details",
+            floatArrayOf(0.3f, 0.4f))
+        val second = LinkedHashMap<String, AttendanceStore.Person>()
+        second[updated.id] = updated
+        store.saveRoster(second)
+
+        val loaded = store.loadRoster().values.single()
+        assertEquals("AB+", loaded.bloodGroup)
+        assertEquals("9876543210", loaded.mobile)
+        assertArrayEquals(floatArrayOf(0.3f, 0.4f), loaded.template, 0f)
     }
 
     @Test

@@ -36,7 +36,7 @@ import org.attendanceai.data.local.db.entities.Person
         AttendanceRecord::class,
         AppSettingEntry::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class AttendanceDatabase : RoomDatabase() {
@@ -47,12 +47,36 @@ abstract class AttendanceDatabase : RoomDatabase() {
     abstract fun settingsDao(): SettingsDao
 
     companion object {
-        /** No-op scaffold reserved for the first real schema migration. */
+        /**
+         * Adds the optional person columns collected by the enrolment details
+         * form (identity number, date of birth, blood group, mobile).
+         *
+         * Idempotent on purpose: databases created by the current entity already
+         * contain these columns, so the migration reads `PRAGMA table_info` and
+         * issues only the ALTERs that are genuinely missing. Running it against
+         * an already-current database is a no-op instead of a "duplicate column
+         * name" failure, which keeps the upgrade safe for every v1 database on
+         * the phone.
+         */
         val MIGRATION_1_2: Migration = object : Migration(1, 2) {
             override fun migrate(database: SupportSQLiteDatabase) {
-                // Intentionally empty: this establishes a non-destructive
-                // migration hook before version 2 changes are introduced.
+                PersonOptionalColumns.alterStatements(existingPeopleColumns(database))
+                    .forEach(database::execSQL)
             }
+        }
+
+        /** Column names of the `people` table as the database currently has them. */
+        internal fun existingPeopleColumns(database: SupportSQLiteDatabase): Set<String> {
+            val columns = LinkedHashSet<String>()
+            database.query("PRAGMA table_info(people)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                if (nameIndex >= 0) {
+                    while (cursor.moveToNext()) {
+                        columns.add(cursor.getString(nameIndex))
+                    }
+                }
+            }
+            return columns
         }
 
         /** Opens the persistent encrypted database for the application. */
@@ -67,6 +91,7 @@ abstract class AttendanceDatabase : RoomDatabase() {
                 DATABASE_NAME,
             )
                 .openHelperFactory(factory)
+                .addMigrations(MIGRATION_1_2)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
         }

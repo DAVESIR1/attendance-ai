@@ -43,19 +43,29 @@ data class GroupWithMembers(val id: Long, val name: String, val memberNames: Lis
  */
 class RoomAttendanceStore(private val database: AttendanceDatabase) {
 
-    /** Loads active people and exposes the first stored embedding to the old pipeline. */
+    /**
+     * Loads active people with ALL of their stored embeddings — the guided
+     * multi-angle enrolment stores one per captured pose — plus the optional
+     * identity fields (still null for people enrolled before they were asked
+     * for).
+     */
     fun loadRoster(): Map<String, AttendanceStore.Person> = runDb {
         val result = LinkedHashMap<String, AttendanceStore.Person>()
         database.personDao().getAll().forEach { person ->
-            val embedding = runCatching { EmbeddingCodec.decode(person.faceEmbeddings).firstOrNull() }
-                .getOrNull()
-            if (embedding != null && embedding.isNotEmpty()) {
-                val legacy = AttendanceStore.Person.create(
+            val embeddings = runCatching { EmbeddingCodec.decode(person.faceEmbeddings) }
+                .getOrDefault(emptyList())
+                .filter { it.isNotEmpty() }
+            if (embeddings.isNotEmpty()) {
+                val legacy = AttendanceStore.Person.createMulti(
                     legacyId(person.id),
                     person.name,
-                    embedding,
+                    embeddings,
                 )
                 legacy.enrolledAtMs = person.createdAt
+                legacy.identityNumber = person.identityNumber
+                legacy.dob = person.dob
+                legacy.bloodGroup = person.bloodGroup
+                legacy.mobile = person.mobile
                 result[legacy.id] = legacy
             }
         }
@@ -83,7 +93,10 @@ class RoomAttendanceStore(private val database: AttendanceDatabase) {
                 people.values.forEach { legacy ->
                     val name = legacy.name.trim()
                     require(name.isNotEmpty()) { "person name must not be blank" }
-                    require(legacy.template != null && legacy.template.isNotEmpty()) {
+                    // All captured embeddings (guided multi-angle enrolment),
+                    // falling back to the single legacy template.
+                    val embeddings = legacy.allTemplates()
+                    require(embeddings.isNotEmpty()) {
                         "person embedding must not be empty"
                     }
                     val id = databaseId(legacy.id)
@@ -91,12 +104,14 @@ class RoomAttendanceStore(private val database: AttendanceDatabase) {
                     val entity = Person(
                         id = id ?: 0L,
                         name = name,
-                        faceEmbeddings = EmbeddingCodec.encode(listOf(legacy.template)),
+                        faceEmbeddings = EmbeddingCodec.encode(embeddings),
                         photoPath = old?.photoPath ?: "",
-                        identityNumber = old?.identityNumber,
-                        dob = old?.dob,
-                        bloodGroup = old?.bloodGroup,
-                        mobile = old?.mobile,
+                        // A caller that does not carry the optional details
+                        // (null) must not erase what is already stored.
+                        identityNumber = legacy.identityNumber ?: old?.identityNumber,
+                        dob = legacy.dob ?: old?.dob,
+                        bloodGroup = legacy.bloodGroup ?: old?.bloodGroup,
+                        mobile = legacy.mobile ?: old?.mobile,
                         consentTimestamp = old?.consentTimestamp ?: System.currentTimeMillis(),
                         createdAt = old?.createdAt ?: legacy.enrolledAtMs,
                         isDeleted = false,

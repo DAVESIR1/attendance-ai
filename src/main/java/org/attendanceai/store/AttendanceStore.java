@@ -209,12 +209,24 @@ public final class AttendanceStore {
 
     // ------------------------------------------------------------ value types
 
-    /** A rostered person with their mean embedding template. */
+    /**
+     * A rostered person with every captured embedding.
+     *
+     * [template] stays the primary/first embedding for the legacy JSON file
+     * format and for callers that only ever stored one; [templates] holds all
+     * of them (the guided multi-angle enrolment stores one per captured pose).
+     * The optional identity fields map 1:1 onto the nullable Room columns.
+     */
     public static final class Person {
         public String id = "";
         public String name = "";
         public long enrolledAtMs = 0L;
         public float[] template = new float[0];
+        public List<float[]> templates = new ArrayList<float[]>();
+        public String identityNumber;
+        public Long dob;
+        public String bloodGroup;
+        public String mobile;
 
         public static Person create(String id, String name, float[] template) {
             Person person = new Person();
@@ -222,7 +234,46 @@ public final class AttendanceStore {
             person.name = name;
             person.enrolledAtMs = System.currentTimeMillis();
             person.template = template == null ? new float[0] : template;
+            person.templates = new ArrayList<float[]>();
+            if (person.template.length > 0) {
+                person.templates.add(person.template);
+            }
             return person;
+        }
+
+        /** Creates a person from several captured embeddings. */
+        public static Person createMulti(String id, String name, List<float[]> templates) {
+            Person person = new Person();
+            person.id = id;
+            person.name = name;
+            person.enrolledAtMs = System.currentTimeMillis();
+            person.templates = new ArrayList<float[]>();
+            if (templates != null) {
+                for (float[] embedding : templates) {
+                    if (embedding != null && embedding.length > 0) {
+                        person.templates.add(embedding);
+                    }
+                }
+            }
+            person.template = person.templates.isEmpty()
+                    ? new float[0] : person.templates.get(0);
+            return person;
+        }
+
+        /** Every non-empty embedding for this person (never null). */
+        public List<float[]> allTemplates() {
+            List<float[]> all = new ArrayList<float[]>();
+            if (templates != null) {
+                for (float[] embedding : templates) {
+                    if (embedding != null && embedding.length > 0) {
+                        all.add(embedding);
+                    }
+                }
+            }
+            if (all.isEmpty() && template != null && template.length > 0) {
+                all.add(template);
+            }
+            return all;
         }
     }
 
