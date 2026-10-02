@@ -13,9 +13,12 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.util.AttributeSet;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -39,6 +42,8 @@ import org.attendanceai.pipeline.FacePipeline;
 import org.attendanceai.pipeline.FailureDiagnosis;
 import org.attendanceai.presentation.lockscreen.LockScreenActivity;
 import org.attendanceai.presentation.lockscreen.SecurityGate;
+import org.attendanceai.vision.CameraFacing;
+import org.attendanceai.vision.CameraFacingState;
 import org.attendanceai.vision.CameraXSource;
 import org.attendanceai.BuildConfig;
 import org.attendanceai.data.local.db.AttendanceDatabase;
@@ -75,6 +80,12 @@ public final class AttendanceActivity extends AppCompatActivity {
     private Button enrollButton;
     /** CameraX renders the preview into this view; the CameraXSource owns it. */
     private PreviewView previewView;
+    /**
+     * Which physical camera to bind. Starts on FRONT (the app's original
+     * default) and flips on every tap of the switch-camera button; it lives
+     * here, not in the camera source, so it survives camera restarts.
+     */
+    private final CameraFacingState cameraFacing = new CameraFacingState();
     /** Rate-limits frame statuses to one log line per 1.5 s, deduped by key. */
     private final EventLogThrottle logThrottle = new EventLogThrottle();
     /** Bounded scrollback: the log view never grows past its line cap. */
@@ -306,9 +317,27 @@ public final class AttendanceActivity extends AppCompatActivity {
         previewView = new PreviewView(this);
         previewView.setBackground(roundBackground(0xFFCBD6E8, 22));
         previewView.setLayoutParams(new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         previewView.setScaleType(PreviewView.ScaleType.FILL_CENTER);
-        root.addView(previewView);
+
+        // Preview + floating camera-switch icon (item 1): the button flips
+        // the facing and restarts the session without touching the pipeline.
+        FrameLayout previewFrame = new FrameLayout(this);
+        previewFrame.addView(previewView);
+        ImageButton switchCamera = new ImageButton(this);
+        switchCamera.setImageResource(android.R.drawable.ic_menu_rotate);
+        switchCamera.setContentDescription("Switch camera");
+        switchCamera.setBackground(roundBackground(0xDFFFFFFF, 18));
+        FrameLayout.LayoutParams switchLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.END);
+        switchLp.setMargins(0, 0, dp(12), dp(12));
+        switchCamera.setLayoutParams(switchLp);
+        switchCamera.setOnClickListener(v -> switchCameraFacing());
+        previewFrame.addView(switchCamera);
+        root.addView(previewFrame, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(260)));
 
         banner = cardText(12f, 0xFF66738D);
         root.addView(banner);
@@ -472,6 +501,23 @@ public final class AttendanceActivity extends AppCompatActivity {
         }
     }
 
+    /**
+     * Camera-switch button (item 1): flips the facing state and, when the
+     * camera is live, stops the current session and restarts it with the
+     * other CameraSelector. The pipeline (detection/matching/logging) is
+     * untouched — only the camera source is torn down and rebuilt.
+     */
+    private void switchCameraFacing() {
+        CameraFacing next = cameraFacing.toggle();
+        if (running) {
+            log("switching camera: " + next.getLabel() + " camera requested");
+            stopCamera();
+            startCamera();
+        } else {
+            log("camera switch: next start will use the " + next.getLabel() + " camera");
+        }
+    }
+
     private void startCamera() {
         if (running) {
             return;
@@ -506,7 +552,8 @@ public final class AttendanceActivity extends AppCompatActivity {
         }
         // CameraX backend: PreviewView renders the preview and the ImageAnalysis
         // use case feeds frames in; both are bound to this activity's lifecycle.
-        CameraXSource source = new CameraXSource(this, previewView);
+        // The requested facing comes from the switch-camera state (front default).
+        CameraXSource source = new CameraXSource(this, previewView, cameraFacing.getFacing());
         source.setStateListener(new CameraXSource.StateListener() {
             @Override
             public void onCameraStarted() {

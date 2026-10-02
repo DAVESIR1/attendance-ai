@@ -59,10 +59,17 @@ import java.util.concurrent.Executors
  * degenerates to a ~0.26 scale crop) and every embedding would be garbage.
  * Enrolment and matching both consume unmirrored frames, so they stay
  * consistent with each other.
+ *
+ * [facing] chooses which [CameraSelector] is *preferred*: the requested
+ * camera is tried first and the other one remains a last-resort fallback
+ * (the original behaviour), so a device missing the requested camera still
+ * binds instead of failing outright. The default is [CameraFacing.FRONT],
+ * which is what this source has always used first.
  */
 class CameraXSource(
     private val activity: AppCompatActivity,
-    private val previewView: PreviewView
+    private val previewView: PreviewView,
+    private val facing: CameraFacing = CameraFacing.FRONT
 ) : CameraBackend {
 
     /** Reports asynchronous outcomes that `start()` cannot return. */
@@ -165,10 +172,20 @@ class CameraXSource(
     /** Tries every usable camera/format combination; true when one bound. */
     private fun bind(provider: ProcessCameraProvider, width: Int, height: Int): Boolean {
         val rotation = previewView.display?.rotation ?: Surface.ROTATION_0
-        val selectors = listOf(
-            CameraSelector.DEFAULT_FRONT_CAMERA,
+        // The caller's chosen camera first (front by default — the original
+        // behaviour), the other as fallback so an unavailable camera degrades
+        // instead of failing. `describe()` logs which one actually bound.
+        val preferred = if (facing == CameraFacing.FRONT) {
+            CameraSelector.DEFAULT_FRONT_CAMERA
+        } else {
             CameraSelector.DEFAULT_BACK_CAMERA
-        )
+        }
+        val fallback = if (facing == CameraFacing.FRONT) {
+            CameraSelector.DEFAULT_BACK_CAMERA
+        } else {
+            CameraSelector.DEFAULT_FRONT_CAMERA
+        }
+        val selectors = listOf(preferred, fallback)
         for (selector in selectors) {
             // RGBA_8888 first (Google's official MediaPipe path), then CameraX's
             // own default format so a device that rejects RGBA still works.
