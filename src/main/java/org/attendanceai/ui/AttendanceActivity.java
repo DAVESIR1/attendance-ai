@@ -143,7 +143,6 @@ public final class AttendanceActivity extends AppCompatActivity {
     private CameraBackend camera;
     private FacePipeline pipeline;
     private AttendanceStore store;
-    private volatile CameraFrame lastFrame;
 
     private boolean running;
 
@@ -688,7 +687,6 @@ public final class AttendanceActivity extends AppCompatActivity {
     }
 
     private void submitFrame(CameraFrame frame) {
-        lastFrame = frame;
         if (!enqueued.compareAndSet(false, true)) {
             return;
         }
